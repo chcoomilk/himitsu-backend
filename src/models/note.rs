@@ -1,5 +1,5 @@
+use crate::errors::{self, ServerError};
 use crate::schema::notes;
-use crate::ServerError;
 use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Algorithm, Argon2, Params, Version,
@@ -14,9 +14,8 @@ pub struct QueryNote {
     pub id: i32,
     pub title: String,
     pub content: String,
-    pub encryption: bool,
     pub password: Option<String>,
-    pub does_expire: bool,
+    pub encryption: bool,
     pub created_at: SystemTime,
     pub expired_at: Option<SystemTime>,
     pub updated_at: SystemTime,
@@ -69,7 +68,6 @@ pub struct InsertNote {
     pub content: String,
     pub encryption: bool,
     pub password: Option<String>,
-    pub does_expire: bool,
     pub created_at: SystemTime,
     pub expired_at: Option<SystemTime>,
     pub updated_at: SystemTime,
@@ -111,34 +109,29 @@ impl ReqNote {
         let time_now = SystemTime::now();
         let expiry_time = match self.lifetime_in_secs {
             Some(duration) => {
-                if duration == 0 {
-                    None
-                } else {
+                if duration > 30 {
                     match time_now.checked_add(Duration::from_secs(duration)) {
                         Some(time) => Some(time),
                         None => {
-                            return Err(ServerError::UserError(
-                                "Please input lower length of time!",
-                            ));
+                            return Err(ServerError::UserError(vec![
+                                errors::Fields::LifetimeInSecs(errors::Error::TooLong),
+                            ]));
                         }
                     }
+                } else {
+                    return Err(ServerError::UserError(vec![
+                        errors::Fields::LifetimeInSecs(errors::Error::TooShort),
+                    ]));
                 }
             }
             None => None,
         };
-        
-        let mut does_expire = true;
-
-        if expiry_time.is_none() {
-            does_expire = false;
-        }
 
         Ok(InsertNote {
             title: self.title,
             content: self.content,
             encryption: self.encryption,
             password: self.password,
-            does_expire,
             created_at: time_now,
             updated_at: time_now,
             expired_at: expiry_time,

@@ -4,10 +4,10 @@ use serde::Deserialize;
 use serde_json::json;
 use std::time::SystemTime;
 
+use crate::errors::{self, ServerError};
 use crate::models::note::{QueryNote, ReqNote};
 use crate::schema;
 use crate::Pool;
-use crate::ServerError;
 
 pub async fn new(
     input: web::Form<ReqNote>,
@@ -15,14 +15,27 @@ pub async fn new(
 ) -> Result<HttpResponse, ServerError> {
     use schema::notes;
     let connection = pool.get()?;
-    if input.0.content.is_empty() || input.0.title.is_empty() {
-        return Err(ServerError::UserError(
-            "Title or description field can't be empty",
-        ));
+    let uinput = input.0;
+    let mut err_vec: Vec<errors::Fields> = Vec::new();
+
+    {
+        if uinput.content.is_empty() {
+            err_vec.push(errors::Fields::Content(errors::Error::Empty));
+        }
+
+        if let Some(password) = &uinput.password {
+            if 4 >= password.len() && uinput.encryption {
+                err_vec.push(errors::Fields::Password(errors::Error::TooShort));
+            }
+        }
+
+        if !err_vec.is_empty() {
+            return Err(ServerError::UserError(err_vec));
+        }
     }
 
     let res = diesel::insert_into(notes::table)
-        .values(input.0.to_insertable()?)
+        .values(uinput.to_insertable()?)
         .get_result::<QueryNote>(&connection)?;
     Ok(HttpResponse::Created().json(json!({
       "id": res.id,
@@ -40,28 +53,17 @@ pub async fn get(
     input: web::Form<PasswordField>,
     pool: web::Data<Pool>,
 ) -> Result<HttpResponse, ServerError> {
-    use schema::notes::dsl::{does_expire, id, notes};
+    use schema::notes::dsl::{id, notes};
     let connection = pool.get()?;
     let query = notes.filter(id.eq(note_id));
     match notes.find(note_id).get_result::<QueryNote>(&connection) {
-        Ok(mut note) => {
-            if note.does_expire {
-                match note.expired_at {
-                    Some(time) => {
-                        if time <= SystemTime::now() {
-                            diesel::delete(query).execute(&connection)?;
-                            return Err(ServerError::NotFound(note_id.to_string()));
-                        }
-                    }
-                    None => {
-                        note = diesel::update(query)
-                            .set(does_expire.eq(false))
-                            .get_result::<QueryNote>(&connection)?;
-                        
-                    }
+        Ok(note) => {
+            if let Some(time) = note.expired_at {
+                if time <= SystemTime::now() {
+                    diesel::delete(query).execute(&connection)?;
+                    return Err(ServerError::NotFound(note_id.to_string()));
                 }
             }
-
             let decrypted_note = note.decrypt(input.password.clone())?;
             Ok(HttpResponse::Ok().json(json!(decrypted_note)))
         }
