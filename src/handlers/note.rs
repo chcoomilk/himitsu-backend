@@ -7,6 +7,7 @@ use std::time::SystemTime;
 use crate::errors::{self, ServerError};
 use crate::models::note::{QueryNote, QueryNoteInfo, ReqNote};
 use crate::schema;
+use crate::utils::get_token;
 use crate::Pool;
 
 pub async fn new(
@@ -57,6 +58,7 @@ pub async fn get_info(
                     return Err(ServerError::NotFound(note_id.to_string()));
                 }
             }
+
             Ok(HttpResponse::Ok().json(json!(note)))
         }
         Err(_) => Err(ServerError::NotFound(note_id.to_string())),
@@ -98,24 +100,24 @@ pub async fn get(
     }
 }
 
-// pub async fn del(
-//   web::Path(note_id): web::Path<i32>,
-//   pool: web::Data<Pool>,
-//   req: web::HttpRequest,
-// ) -> Result<HttpResponse, ServerError> {
-//   if let Some(payload) = middlewares::auth(&req) {
-//     use schema::notes::dsl::{id, notes, author};
-//     let connection = pool.get().unwrap();
-//     let res = delete(notes
-//       .filter(id.eq(note_id))
-//       .filter(author.eq(payload.id))
-//     ).execute(&connection)?;
-//     if res == 1 {
-//       Ok(HttpResponse::Ok().json(format!("Successfully deleted: {}", note_id)))
-//     } else {
-//       Err(ServerError::UserError("Note does not exist"))
-//     }
-//   } else {
-//     Err(ServerError::AccessDenied)
-//   }
-// }
+pub async fn del(
+    web::Path(note_id): web::Path<i32>,
+    pool: web::Data<Pool>,
+    req: web::HttpRequest,
+) -> Result<HttpResponse, ServerError> {
+    let token = get_token(req);
+    Ok(HttpResponse::Ok().json(token))
+    // if let Some(payload) = middlewares::auth(&req) {
+    //     use schema::notes::dsl::{author, id, notes};
+    //     let connection = pool.get().unwrap();
+    //     let res = delete(notes.filter(id.eq(note_id)).filter(author.eq(payload.id)))
+    //         .execute(&connection)?;
+    //     if res == 1 {
+    //         Ok(HttpResponse::Ok().json(format!("Successfully deleted: {}", note_id)))
+    //     } else {
+    //         Err(ServerError::UserError("Note does not exist"))
+    //     }
+    // } else {
+    //     Err(ServerError::AccessDenied)
+    // }
+}

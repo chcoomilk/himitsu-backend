@@ -16,6 +16,7 @@ mod errors;
 mod handlers;
 mod models;
 mod schema;
+mod utils;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -64,6 +65,7 @@ async fn main() -> std::io::Result<()> {
             .service(
                 web::scope("/notes")
                     .route("/new", web::post().to(handlers::note::new))
+                    .route("/{id}", web::delete().to(handlers::note::del))
                     .route("/{id}", web::get().to(handlers::note::get_info))
                     .route("/{id}/decrypt", web::post().to(handlers::note::get)),
             )

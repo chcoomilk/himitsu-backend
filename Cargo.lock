@@ -1133,6 +1133,7 @@ dependencies = [
  "actix-ratelimit",
  "actix-web",
  "argon2",
+ "derive_more",
  "diesel",
  "dotenv",
  "env_logger",

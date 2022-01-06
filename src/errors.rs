@@ -1,4 +1,5 @@
 use actix_web::HttpResponse;
+use derive_more::Display;
 use serde::Serialize;
 use serde_json::json;
 
@@ -17,7 +18,7 @@ pub enum Fields {
     LifetimeInSecs(Error),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Display)]
 pub enum ServerError {
     ArgonError,
     DieselError,
@@ -25,15 +26,17 @@ pub enum ServerError {
     R2D2Error,
     MagicCryptError,
     InvalidCred,
+    #[display(fmt = "Bad Request: {:?}", _0)]
     UserError(Vec<Fields>),
+    #[display(fmt = "Not Found")]
     NotFound(String),
 }
 
-impl std::fmt::Display for ServerError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Test")
-    }
-}
+// impl std::fmt::Display for ServerError {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//         write!(f, "Test")
+//     }
+// }
 
 impl From<r2d2::Error> for ServerError {
     fn from(_: r2d2::Error) -> ServerError {
@@ -92,9 +95,7 @@ impl actix_web::error::ResponseError for ServerError {
             ServerError::InvalidCred => {
                 HttpResponse::Unauthorized().json(format!("Invalid Request: wrong credentials"))
             }
-            ServerError::UserError(err) => {
-                HttpResponse::BadRequest().json(json!(err))
-            }
+            ServerError::UserError(err) => HttpResponse::BadRequest().json(json!(err)),
             ServerError::NotFound(id) => HttpResponse::NotFound()
                 .json(format!("Content with the id of: '{}' was not found", id)),
         }
