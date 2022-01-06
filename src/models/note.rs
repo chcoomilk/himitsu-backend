@@ -10,6 +10,15 @@ use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime};
 
 #[derive(Clone, Debug, Queryable, Serialize)]
+pub struct QueryNoteInfo {
+    pub id: i32,
+    pub title: String,
+    pub encryption: bool,
+    pub expired_at: Option<SystemTime>,
+}
+
+// match this with table note in schema.rs
+#[derive(Clone, Debug, Queryable, Serialize)]
 pub struct QueryNote {
     pub id: i32,
     pub title: String,
@@ -23,8 +32,12 @@ pub struct QueryNote {
 
 impl QueryNote {
     pub fn decrypt(mut self, password: String) -> Result<Self, ServerError> {
-        match self.password {
-            Some(password_hash) => {
+        if password.len() <= 4 {
+            return Err(ServerError::UserError(vec![errors::Fields::Password(
+                errors::Error::TooShort,
+            )]));
+        } else {
+            if let Some(password_hash) = self.password {
                 let secret = std::env::var("SECRET_KEY")?;
                 let parsed_hash = PasswordHash::new(&password_hash)?;
                 let valid = Argon2::new_with_secret(
@@ -39,15 +52,12 @@ impl QueryNote {
                     let mc = new_magic_crypt!(password, 256);
                     self.content = mc.decrypt_base64_to_string(self.content)?;
                     self.password = None;
-                    return Ok(self);
                 } else {
                     return Err(ServerError::InvalidCred);
                 }
             }
-            None => {
-                println!("Note ID {} is already decrypted", self.id);
-                return Ok(self);
-            }
+
+            Ok(self)
         }
     }
 }
@@ -74,41 +84,44 @@ pub struct InsertNote {
 }
 
 impl ReqNote {
-    fn encrypt(mut self) -> Result<Self, ServerError> {
-        match self.password {
-            Some(password) => {
-                let secret = std::env::var("SECRET_KEY")?;
-                let mc = new_magic_crypt!(&password, 256);
-
-                let hashed_password = Argon2::new_with_secret(
-                    secret.as_bytes(),
-                    Algorithm::default(),
-                    Version::default(),
-                    Params::default(),
-                )?
-                .hash_password(password.as_bytes(), &SaltString::generate(&mut OsRng))?
-                .to_string();
-
-                self.content = mc.encrypt_str_to_base64(self.content);
-                self.password = Some(hashed_password);
-                self.encryption = true;
-            }
-            None => {
-                self.password = None;
-            }
+    fn encrypt(mut self, password: String) -> Result<Self, ServerError> {
+        if password.len() <= 4 {
+            return Err(ServerError::UserError(vec![errors::Fields::Password(
+                errors::Error::TooShort,
+            )]));
         }
+
+        let secret = std::env::var("SECRET_KEY")?;
+
+        let mc = new_magic_crypt!(&password, 256);
+
+        let hashed_password = Argon2::new_with_secret(
+            secret.as_bytes(),
+            Algorithm::default(),
+            Version::default(),
+            Params::default(),
+        )?
+        .hash_password(password.as_bytes(), &SaltString::generate(&mut OsRng))?
+        .to_string();
+
+        self.content = mc.encrypt_str_to_base64(self.content);
+        self.password = Some(hashed_password);
 
         Ok(self)
     }
 
     pub fn to_insertable(mut self) -> Result<InsertNote, ServerError> {
-        if self.encryption && self.password.is_some() {
-            self = self.encrypt()?;
-        }
-
         let time_now = SystemTime::now();
         let expiry_time = match self.lifetime_in_secs {
             Some(duration) => {
+                // delete this if diesel can finally save some big length of date
+                if duration > u32::MAX as u64 {
+                    return Err(ServerError::UserError(vec![
+                        errors::Fields::LifetimeInSecs(errors::Error::TooLong),
+                    ]));
+                }
+                //
+
                 if duration > 30 {
                     match time_now.checked_add(Duration::from_secs(duration)) {
                         Some(time) => Some(time),
@@ -126,6 +139,14 @@ impl ReqNote {
             }
             None => None,
         };
+
+        if self.encryption {
+            if let Some(password) = self.password.clone() {
+                self = self.encrypt(password)?;
+            }
+        } else {
+            self.password = None;
+        }
 
         Ok(InsertNote {
             title: self.title,

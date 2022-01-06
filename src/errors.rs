@@ -10,6 +10,7 @@ pub enum Error {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all(serialize = "snake_case"), tag = "field", content = "error")]
 pub enum Fields {
     Content(Error),
     Password(Error),

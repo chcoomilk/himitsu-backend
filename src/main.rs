@@ -22,7 +22,7 @@ async fn main() -> std::io::Result<()> {
     dotenv::dotenv().ok();
     std::env::var("SECRET_KEY").expect("env SECRET_KEY");
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
-    let port = std::env::var("PORT").expect("env PORT");
+    let port = std::env::var("PORT").unwrap_or("8080".to_string());
     let database_url = std::env::var("DATABASE_URL").expect("env DATABASE_URL");
     let manager = ConnectionManager::<PgConnection>::new(database_url);
     let pool = r2d2::Pool::builder()
@@ -64,7 +64,8 @@ async fn main() -> std::io::Result<()> {
             .service(
                 web::scope("/notes")
                     .route("/new", web::post().to(handlers::note::new))
-                    .route("/get/{id}", web::post().to(handlers::note::get)),
+                    .route("/{id}", web::get().to(handlers::note::get_info))
+                    .route("/{id}/decrypt", web::post().to(handlers::note::get)),
             )
     })
     .bind(format!("0.0.0.0:{}", port))?

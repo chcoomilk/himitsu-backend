@@ -5,15 +5,18 @@ use serde_json::json;
 use std::time::SystemTime;
 
 use crate::errors::{self, ServerError};
-use crate::models::note::{QueryNote, ReqNote};
+use crate::models::note::{QueryNote, QueryNoteInfo, ReqNote};
 use crate::schema;
 use crate::Pool;
 
 pub async fn new(
-    input: web::Form<ReqNote>,
+    input: web::Json<ReqNote>,
     pool: web::Data<Pool>,
 ) -> Result<HttpResponse, ServerError> {
-    use schema::notes;
+    use schema::notes::{
+        self,
+        dsl::{encryption, expired_at, id, title},
+    };
     let connection = pool.get()?;
     let uinput = input.0;
     let mut err_vec: Vec<errors::Fields> = Vec::new();
@@ -23,12 +26,6 @@ pub async fn new(
             err_vec.push(errors::Fields::Content(errors::Error::Empty));
         }
 
-        if let Some(password) = &uinput.password {
-            if 4 >= password.len() && uinput.encryption {
-                err_vec.push(errors::Fields::Password(errors::Error::TooShort));
-            }
-        }
-
         if !err_vec.is_empty() {
             return Err(ServerError::UserError(err_vec));
         }
@@ -36,11 +33,34 @@ pub async fn new(
 
     let res = diesel::insert_into(notes::table)
         .values(uinput.to_insertable()?)
-        .get_result::<QueryNote>(&connection)?;
-    Ok(HttpResponse::Created().json(json!({
-      "id": res.id,
-      "expired_at": res.expired_at
-    })))
+        .returning((id, title, encryption, expired_at))
+        .get_results::<QueryNoteInfo>(&connection)?;
+    Ok(HttpResponse::Created().json(json!(res)))
+}
+
+pub async fn get_info(
+    web::Path(note_id): web::Path<i32>,
+    pool: web::Data<Pool>,
+) -> Result<HttpResponse, ServerError> {
+    use schema::notes::dsl::{encryption, expired_at, id, notes, title};
+    let connection = pool.get()?;
+
+    match notes
+        .select((id, title, encryption, expired_at))
+        .filter(id.eq(note_id))
+        .first::<QueryNoteInfo>(&connection)
+    {
+        Ok(note) => {
+            if let Some(time) = note.expired_at {
+                if time <= SystemTime::now() {
+                    diesel::delete(notes.filter(id.eq(note_id))).execute(&connection)?;
+                    return Err(ServerError::NotFound(note_id.to_string()));
+                }
+            }
+            Ok(HttpResponse::Ok().json(json!(note)))
+        }
+        Err(_) => Err(ServerError::NotFound(note_id.to_string())),
+    }
 }
 
 #[derive(Deserialize)]
@@ -50,24 +70,31 @@ pub struct PasswordField {
 
 pub async fn get(
     web::Path(note_id): web::Path<i32>,
-    input: web::Form<PasswordField>,
+    input: web::Json<PasswordField>,
     pool: web::Data<Pool>,
 ) -> Result<HttpResponse, ServerError> {
     use schema::notes::dsl::{id, notes};
     let connection = pool.get()?;
-    let query = notes.filter(id.eq(note_id));
+
     match notes.find(note_id).get_result::<QueryNote>(&connection) {
-        Ok(note) => {
+        Ok(mut note) => {
             if let Some(time) = note.expired_at {
                 if time <= SystemTime::now() {
-                    diesel::delete(query).execute(&connection)?;
+                    diesel::delete(notes.filter(id.eq(note_id))).execute(&connection)?;
                     return Err(ServerError::NotFound(note_id.to_string()));
                 }
             }
-            let decrypted_note = note.decrypt(input.password.clone())?;
-            Ok(HttpResponse::Ok().json(json!(decrypted_note)))
+
+            if note.encryption {
+                note = note.decrypt(input.password.clone())?;
+            }
+
+            Ok(HttpResponse::Ok().json(json!(note)))
         }
-        Err(_) => Err(ServerError::NotFound(note_id.to_string())),
+        Err(err) => match err {
+            diesel::result::Error::NotFound => Err(ServerError::NotFound(note_id.to_string())),
+            _ => Err(ServerError::DieselError),
+        },
     }
 }
 
