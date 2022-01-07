@@ -1,7 +1,8 @@
 use crate::errors::{self, ServerError};
 use crate::schema::notes;
+use crate::utils::is_password_valid;
 use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+    password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
     Algorithm, Argon2, Params, Version,
 };
 use diesel::{Insertable, Queryable};
@@ -18,7 +19,7 @@ pub struct QueryNoteInfo {
 }
 
 // match this with table note in schema.rs
-#[derive(Clone, Debug, Queryable, Serialize)]
+#[derive(Clone, Debug, Queryable)]
 pub struct QueryNote {
     pub id: i32,
     pub title: String,
@@ -30,34 +31,58 @@ pub struct QueryNote {
     pub updated_at: SystemTime,
 }
 
-impl QueryNote {
-    pub fn decrypt(mut self, password: String) -> Result<Self, ServerError> {
-        if password.len() <= 4 {
-            return Err(ServerError::UserError(vec![errors::Fields::Password(
-                errors::Error::TooShort,
-            )]));
-        } else {
-            if let Some(password_hash) = self.password {
-                let secret = std::env::var("SECRET_KEY")?;
-                let parsed_hash = PasswordHash::new(&password_hash)?;
-                let valid = Argon2::new_with_secret(
-                    secret.as_bytes(),
-                    Algorithm::default(),
-                    Version::default(),
-                    Params::default(),
-                )?
-                .verify_password(&password.as_bytes(), &parsed_hash)
-                .is_ok();
-                if valid {
-                    let mc = new_magic_crypt!(password, 256);
-                    self.content = mc.decrypt_base64_to_string(self.content)?;
-                    self.password = None;
-                } else {
-                    return Err(ServerError::InvalidCred);
-                }
-            }
+#[derive(Clone, Serialize)]
+pub struct ResNote {
+    pub id: i32,
+    pub title: String,
+    pub content: String,
+    pub decrypted: bool,
+    pub created_at: SystemTime,
+    pub expired_at: Option<SystemTime>,
+    pub updated_at: SystemTime,
+}
 
-            Ok(self)
+impl QueryNote {
+    fn omit_fields(self, decrypted: bool) -> ResNote {
+        return ResNote {
+            id: self.id,
+            title: self.title,
+            content: self.content,
+            decrypted,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            expired_at: self.expired_at,
+        };
+    }
+
+    pub fn try_decrypt(mut self, password_input: Option<String>) -> Result<ResNote, ServerError> {
+        if self.encryption {
+            if let Some(password_hash) = self.password.clone() {
+                if let Some(password) = password_input {
+                    if password.len() < 4 {
+                        return Err(ServerError::UserError(vec![errors::Fields::Password(
+                            errors::Error::TooShort,
+                        )]));
+                    }
+
+                    if is_password_valid(password_hash, &password)? {
+                        let mc = new_magic_crypt!(password, 256);
+                        self.content = mc.decrypt_base64_to_string(self.content)?;
+                    } else {
+                        return Err(ServerError::InvalidCred);
+                    }
+
+                    Ok(self.omit_fields(true))
+                } else {
+                    return Err(ServerError::UserError(vec![errors::Fields::Password(
+                        errors::Error::Empty,
+                    )]));
+                }
+            } else {
+                Ok(self.omit_fields(false))
+            }
+        } else {
+            Ok(self.omit_fields(true))
         }
     }
 }
@@ -85,7 +110,7 @@ pub struct InsertNote {
 
 impl ReqNote {
     fn encrypt(mut self, password: String) -> Result<Self, ServerError> {
-        if password.len() <= 4 {
+        if password.len() < 4 {
             return Err(ServerError::UserError(vec![errors::Fields::Password(
                 errors::Error::TooShort,
             )]));
@@ -110,7 +135,7 @@ impl ReqNote {
         Ok(self)
     }
 
-    pub fn to_insertable(mut self) -> Result<InsertNote, ServerError> {
+    pub fn into_insert(mut self) -> Result<InsertNote, ServerError> {
         let time_now = SystemTime::now();
         let expiry_time = match self.lifetime_in_secs {
             Some(duration) => {

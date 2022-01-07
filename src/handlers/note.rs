@@ -5,19 +5,20 @@ use serde_json::json;
 use std::time::SystemTime;
 
 use crate::errors::{self, ServerError};
-use crate::models::note::{QueryNote, QueryNoteInfo, ReqNote};
+use crate::models::note::{QueryNote, QueryNoteInfo, ReqNote, ResNote};
 use crate::schema;
-use crate::utils::get_token;
+use crate::utils::is_password_valid;
 use crate::Pool;
+
+use schema::notes::{
+    self,
+    dsl::{encryption, expired_at, id, notes as table, title},
+};
 
 pub async fn new(
     input: web::Json<ReqNote>,
     pool: web::Data<Pool>,
 ) -> Result<HttpResponse, ServerError> {
-    use schema::notes::{
-        self,
-        dsl::{encryption, expired_at, id, title},
-    };
     let connection = pool.get()?;
     let uinput = input.0;
     let mut err_vec: Vec<errors::Fields> = Vec::new();
@@ -33,7 +34,7 @@ pub async fn new(
     }
 
     let res = diesel::insert_into(notes::table)
-        .values(uinput.to_insertable()?)
+        .values(uinput.into_insert()?)
         .returning((id, title, encryption, expired_at))
         .get_results::<QueryNoteInfo>(&connection)?;
     Ok(HttpResponse::Created().json(json!(res)))
@@ -43,10 +44,9 @@ pub async fn get_info(
     web::Path(note_id): web::Path<i32>,
     pool: web::Data<Pool>,
 ) -> Result<HttpResponse, ServerError> {
-    use schema::notes::dsl::{encryption, expired_at, id, notes, title};
     let connection = pool.get()?;
 
-    match notes
+    match table
         .select((id, title, encryption, expired_at))
         .filter(id.eq(note_id))
         .first::<QueryNoteInfo>(&connection)
@@ -54,7 +54,7 @@ pub async fn get_info(
         Ok(note) => {
             if let Some(time) = note.expired_at {
                 if time <= SystemTime::now() {
-                    diesel::delete(notes.filter(id.eq(note_id))).execute(&connection)?;
+                    diesel::delete(table.filter(id.eq(note_id))).execute(&connection)?;
                     return Err(ServerError::NotFound(note_id.to_string()));
                 }
             }
@@ -67,31 +67,28 @@ pub async fn get_info(
 
 #[derive(Deserialize)]
 pub struct PasswordField {
-    pub password: String,
+    pub password: Option<String>,
 }
 
-pub async fn get(
+pub async fn decrypt(
     web::Path(note_id): web::Path<i32>,
     input: web::Json<PasswordField>,
     pool: web::Data<Pool>,
 ) -> Result<HttpResponse, ServerError> {
-    use schema::notes::dsl::{id, notes};
     let connection = pool.get()?;
 
-    match notes.find(note_id).get_result::<QueryNote>(&connection) {
-        Ok(mut note) => {
+    match table.find(note_id).get_result::<QueryNote>(&connection) {
+        Ok(note) => {
             if let Some(time) = note.expired_at {
                 if time <= SystemTime::now() {
-                    diesel::delete(notes.filter(id.eq(note_id))).execute(&connection)?;
+                    diesel::delete(table.filter(id.eq(note_id))).execute(&connection)?;
                     return Err(ServerError::NotFound(note_id.to_string()));
                 }
             }
 
-            if note.encryption {
-                note = note.decrypt(input.password.clone())?;
-            }
+            let result: ResNote = note.try_decrypt(input.0.password)?;
 
-            Ok(HttpResponse::Ok().json(json!(note)))
+            Ok(HttpResponse::Ok().json(json!(result)))
         }
         Err(err) => match err {
             diesel::result::Error::NotFound => Err(ServerError::NotFound(note_id.to_string())),
@@ -101,23 +98,37 @@ pub async fn get(
 }
 
 pub async fn del(
-    web::Path(note_id): web::Path<i32>,
-    pool: web::Data<Pool>,
-    req: web::HttpRequest,
+    web::Path(_note_id): web::Path<i32>,
+    _input: web::Json<PasswordField>,
+    _pool: web::Data<Pool>,
+    _req: web::HttpRequest,
 ) -> Result<HttpResponse, ServerError> {
-    let token = get_token(req);
-    Ok(HttpResponse::Ok().json(token))
-    // if let Some(payload) = middlewares::auth(&req) {
-    //     use schema::notes::dsl::{author, id, notes};
-    //     let connection = pool.get().unwrap();
-    //     let res = delete(notes.filter(id.eq(note_id)).filter(author.eq(payload.id)))
-    //         .execute(&connection)?;
-    //     if res == 1 {
-    //         Ok(HttpResponse::Ok().json(format!("Successfully deleted: {}", note_id)))
-    //     } else {
-    //         Err(ServerError::UserError("Note does not exist"))
-    //     }
-    // } else {
-    //     Err(ServerError::AccessDenied)
-    // }
+    let connection = _pool.get()?;
+    // let token = get_token(req);
+    // Ok(HttpResponse::Ok().json(token))
+
+    match table.find(_note_id).get_result::<QueryNote>(&connection) {
+        Ok(note) => {
+            if let Some(password_hash) = note.password {
+                if let Some(password) = &_input.0.password {
+                    if !is_password_valid(password_hash, password)? {
+                        return Err(ServerError::InvalidCred);
+                    }
+                } else {
+                    return Err(ServerError::UserError(vec![errors::Fields::Password(
+                        errors::Error::Empty,
+                    )]));
+                }
+            }
+
+            diesel::delete(table.filter(id.eq(note.id))).execute(&connection)?;
+            Ok(HttpResponse::Ok().json(json!({
+                "id": note.id,
+            })))
+        }
+        Err(err) => match err {
+            diesel::result::Error::NotFound => Err(ServerError::NotFound(_note_id.to_string())),
+            _ => Err(ServerError::DieselError),
+        },
+    }
 }

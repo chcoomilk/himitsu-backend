@@ -97,7 +97,9 @@ impl actix_web::error::ResponseError for ServerError {
             }
             ServerError::UserError(err) => HttpResponse::BadRequest().json(json!(err)),
             ServerError::NotFound(id) => HttpResponse::NotFound()
-                .json(format!("Content with the id of: '{}' was not found", id)),
+                .json(json!({
+                    "id": id,
+                })),
         }
     }
 }
