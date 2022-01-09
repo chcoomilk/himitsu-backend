@@ -11,7 +11,7 @@ use crate::utils::is_password_valid;
 use crate::Pool;
 
 use schema::notes::{
-    dsl::{encryption, expired_at, id, notes, title},
+    dsl::{encryption, expired_at, id, notes, title, password},
 };
 
 pub async fn new(
@@ -32,11 +32,12 @@ pub async fn new(
         }
     }
 
-    let res = diesel::insert_into(notes)
+    let result = diesel::insert_into(notes)
         .values(uinput.into_insert()?)
-        .returning((id, title, encryption, expired_at))
+        .returning((id, title, encryption, password, expired_at))
         .get_results::<QueryNoteInfo>(&connection)?;
-    Ok(HttpResponse::Created().json(json!(res[0])))
+    let response = result[0].to_owned().into_response();
+    Ok(HttpResponse::Created().json(json!(response)))
 }
 
 pub async fn get_info(
@@ -46,7 +47,7 @@ pub async fn get_info(
     let connection = pool.get()?;
 
     match notes
-        .select((id, title, encryption, expired_at))
+        .select((id, title, encryption, password, expired_at))
         .filter(id.eq(note_id))
         .first::<QueryNoteInfo>(&connection)
     {
@@ -58,7 +59,7 @@ pub async fn get_info(
                 }
             }
 
-            Ok(HttpResponse::Ok().json(json!(note)))
+            Ok(HttpResponse::Ok().json(json!(note.into_response())))
         }
         Err(_) => Err(ServerError::NotFound(note_id.to_string())),
     }
@@ -109,8 +110,8 @@ pub async fn del(
     match notes.find(note_id).get_result::<QueryNote>(&connection) {
         Ok(note) => {
             if let Some(password_hash) = note.password {
-                if let Some(password) = &input.0.password {
-                    if !is_password_valid(password_hash, password)? {
+                if let Some(password_input) = &input.0.password {
+                    if !is_password_valid(password_hash, password_input)? {
                         return Err(ServerError::InvalidCredentials);
                     }
                 } else {

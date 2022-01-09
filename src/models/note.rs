@@ -10,12 +10,44 @@ use magic_crypt::{new_magic_crypt, MagicCryptTrait};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime};
 
-#[derive(Clone, Debug, Queryable, Serialize)]
+#[derive(Clone, Debug, Queryable)]
 pub struct QueryNoteInfo {
     pub id: i32,
     pub title: String,
     pub encryption: bool,
+    pub password: Option<String>,
     pub expired_at: Option<SystemTime>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ResNoteInfo {
+    pub id: i32,
+    pub title: String,
+    pub encryption: bool,
+    pub decryptable: bool,
+    pub expired_at: Option<SystemTime>,
+}
+
+impl QueryNoteInfo {
+    pub fn into_response(self) -> ResNoteInfo {
+        if self.password.is_some() {
+            ResNoteInfo {
+                id: self.id,
+                title: self.title,
+                decryptable: true,
+                encryption: self.encryption,
+                expired_at: self.expired_at,
+            }
+        } else {
+            ResNoteInfo {
+                id: self.id,
+                title: self.title,
+                decryptable: false,
+                encryption: self.encryption,
+                expired_at: self.expired_at,
+            }
+        }
+    }
 }
 
 // match this with table note in schema.rs
@@ -61,14 +93,8 @@ impl QueryNote {
         if self.encryption {
             if let Some(password_hash) = self.password.clone() {
                 if let Some(password) = password_input {
-                    if password.len() <= 4 {
-                        return Err(ServerError::UserError(vec![errors::Fields::Password(
-                            errors::CommonError::TooShort,
-                        )]));
-                    } else if password.len() > 1024 {
-                        return Err(ServerError::UserError(vec![errors::Fields::Password(
-                            errors::CommonError::TooLong,
-                        )]))
+                    if password.len() < 4 || password.len() >= 1024 {
+                        return Err(ServerError::InvalidCredentials);
                     }
 
                     if is_password_valid(password_hash, &password)? {
@@ -80,9 +106,7 @@ impl QueryNote {
 
                     Ok(self.omit_fields(true))
                 } else {
-                    return Err(ServerError::UserError(vec![errors::Fields::Password(
-                        errors::CommonError::Empty,
-                    )]));
+                    return Err(ServerError::InvalidCredentials);
                 }
             } else {
                 Ok(self.omit_fields(false))
@@ -116,14 +140,14 @@ pub struct InsertNote {
 
 impl ReqNote {
     fn encrypt(mut self, password: String) -> Result<Self, ServerError> {
-        if password.len() <= 4 {
+        if password.len() < 4 {
             return Err(ServerError::UserError(vec![errors::Fields::Password(
                 errors::CommonError::TooShort,
             )]));
-        } else if password.len() > 1024 {
+        } else if password.len() >= 1024 {
             return Err(ServerError::UserError(vec![errors::Fields::Password(
                 errors::CommonError::TooLong,
-            )]))
+            )]));
         }
 
         let secret = std::env::var("SECRET_KEY")?;
