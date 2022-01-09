@@ -7,8 +7,6 @@ use diesel::pg::PgConnection;
 use diesel::prelude::*;
 use diesel::r2d2::ConnectionManager;
 
-pub type Pool = r2d2::Pool<ConnectionManager<PgConnection>>;
-
 #[macro_use]
 extern crate diesel;
 
@@ -18,24 +16,25 @@ mod models;
 mod schema;
 mod utils;
 
+pub type Pool = r2d2::Pool<ConnectionManager<PgConnection>>;
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenv::dotenv().ok();
-    std::env::var("SECRET_KEY").expect("env SECRET_KEY");
+    std::env::var("SECRET_KEY").expect("SECRET_KEY in .env");
+
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
-    let port = std::env::var("PORT").unwrap_or("8080".to_string());
-    let database_url = std::env::var("DATABASE_URL").expect("env DATABASE_URL");
-    let manager = ConnectionManager::<PgConnection>::new(database_url);
     let pool = r2d2::Pool::builder()
-        .build(manager)
-        .expect("failed to create a pg pool");
-    let connection = pool.get().unwrap();
-    let store = MemoryStore::new();
+        .build(ConnectionManager::<PgConnection>::new(
+            std::env::var("DATABASE_URL").expect("DATABASE_URL in .env"),
+        ))
+        .expect("fail to create a pg pool");
+
     let interval = std::env::var("CLEANUP_INTERVAL")
         .unwrap_or("2700".to_string())
         .parse::<u64>()
         .expect("CLEANUP_INTERVAL must be postive integer");
-
+    let connection = pool.get().unwrap();
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_secs(interval));
         use schema::notes::dsl::notes;
@@ -44,6 +43,7 @@ async fn main() -> std::io::Result<()> {
             .unwrap();
     });
 
+    let port = std::env::var("PORT").unwrap_or("8080".to_string());
     HttpServer::new(move || {
         App::new()
             .data(pool.clone())
@@ -56,7 +56,7 @@ async fn main() -> std::io::Result<()> {
                     .max_age(3600),
             )
             .wrap(
-                RateLimiter::new(MemoryStoreActor::from(store.clone()).start())
+                RateLimiter::new(MemoryStoreActor::from(MemoryStore::new().clone()).start())
                     .with_interval(std::time::Duration::from_secs(60))
                     .with_max_requests(120),
             )

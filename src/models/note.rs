@@ -36,6 +36,7 @@ pub struct ResNote {
     pub id: i32,
     pub title: String,
     pub content: String,
+    pub encryption: bool,
     pub decrypted: bool,
     pub created_at: SystemTime,
     pub expired_at: Option<SystemTime>,
@@ -48,6 +49,7 @@ impl QueryNote {
             id: self.id,
             title: self.title,
             content: self.content,
+            encryption: self.encryption,
             decrypted,
             created_at: self.created_at,
             updated_at: self.updated_at,
@@ -59,23 +61,27 @@ impl QueryNote {
         if self.encryption {
             if let Some(password_hash) = self.password.clone() {
                 if let Some(password) = password_input {
-                    if password.len() < 4 {
+                    if password.len() <= 4 {
                         return Err(ServerError::UserError(vec![errors::Fields::Password(
-                            errors::Error::TooShort,
+                            errors::CommonError::TooShort,
                         )]));
+                    } else if password.len() > 1024 {
+                        return Err(ServerError::UserError(vec![errors::Fields::Password(
+                            errors::CommonError::TooLong,
+                        )]))
                     }
 
                     if is_password_valid(password_hash, &password)? {
                         let mc = new_magic_crypt!(password, 256);
                         self.content = mc.decrypt_base64_to_string(self.content)?;
                     } else {
-                        return Err(ServerError::InvalidCred);
+                        return Err(ServerError::InvalidCredentials);
                     }
 
                     Ok(self.omit_fields(true))
                 } else {
                     return Err(ServerError::UserError(vec![errors::Fields::Password(
-                        errors::Error::Empty,
+                        errors::CommonError::Empty,
                     )]));
                 }
             } else {
@@ -110,10 +116,14 @@ pub struct InsertNote {
 
 impl ReqNote {
     fn encrypt(mut self, password: String) -> Result<Self, ServerError> {
-        if password.len() < 4 {
+        if password.len() <= 4 {
             return Err(ServerError::UserError(vec![errors::Fields::Password(
-                errors::Error::TooShort,
+                errors::CommonError::TooShort,
             )]));
+        } else if password.len() > 1024 {
+            return Err(ServerError::UserError(vec![errors::Fields::Password(
+                errors::CommonError::TooLong,
+            )]))
         }
 
         let secret = std::env::var("SECRET_KEY")?;
@@ -142,7 +152,7 @@ impl ReqNote {
                 // delete this if diesel can finally save some big length of date
                 if duration > u32::MAX as u64 {
                     return Err(ServerError::UserError(vec![
-                        errors::Fields::LifetimeInSecs(errors::Error::TooLong),
+                        errors::Fields::LifetimeInSecs(errors::CommonError::TooLong),
                     ]));
                 }
                 //
@@ -152,13 +162,13 @@ impl ReqNote {
                         Some(time) => Some(time),
                         None => {
                             return Err(ServerError::UserError(vec![
-                                errors::Fields::LifetimeInSecs(errors::Error::TooLong),
+                                errors::Fields::LifetimeInSecs(errors::CommonError::TooLong),
                             ]));
                         }
                     }
                 } else {
                     return Err(ServerError::UserError(vec![
-                        errors::Fields::LifetimeInSecs(errors::Error::TooShort),
+                        errors::Fields::LifetimeInSecs(errors::CommonError::TooShort),
                     ]));
                 }
             }
