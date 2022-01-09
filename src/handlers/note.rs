@@ -11,8 +11,7 @@ use crate::utils::is_password_valid;
 use crate::Pool;
 
 use schema::notes::{
-    self,
-    dsl::{encryption, expired_at, id, notes as table, title},
+    dsl::{encryption, expired_at, id, notes, title},
 };
 
 pub async fn new(
@@ -25,7 +24,7 @@ pub async fn new(
 
     {
         if uinput.content.is_empty() {
-            err_vec.push(errors::Fields::Content(errors::Error::Empty));
+            err_vec.push(errors::Fields::Content(errors::CommonError::Empty));
         }
 
         if !err_vec.is_empty() {
@@ -33,11 +32,11 @@ pub async fn new(
         }
     }
 
-    let res = diesel::insert_into(notes::table)
+    let res = diesel::insert_into(notes)
         .values(uinput.into_insert()?)
         .returning((id, title, encryption, expired_at))
         .get_results::<QueryNoteInfo>(&connection)?;
-    Ok(HttpResponse::Created().json(json!(res)))
+    Ok(HttpResponse::Created().json(json!(res[0])))
 }
 
 pub async fn get_info(
@@ -46,7 +45,7 @@ pub async fn get_info(
 ) -> Result<HttpResponse, ServerError> {
     let connection = pool.get()?;
 
-    match table
+    match notes
         .select((id, title, encryption, expired_at))
         .filter(id.eq(note_id))
         .first::<QueryNoteInfo>(&connection)
@@ -54,7 +53,7 @@ pub async fn get_info(
         Ok(note) => {
             if let Some(time) = note.expired_at {
                 if time <= SystemTime::now() {
-                    diesel::delete(table.filter(id.eq(note_id))).execute(&connection)?;
+                    diesel::delete(notes.filter(id.eq(note_id))).execute(&connection)?;
                     return Err(ServerError::NotFound(note_id.to_string()));
                 }
             }
@@ -77,11 +76,11 @@ pub async fn decrypt(
 ) -> Result<HttpResponse, ServerError> {
     let connection = pool.get()?;
 
-    match table.find(note_id).get_result::<QueryNote>(&connection) {
+    match notes.find(note_id).get_result::<QueryNote>(&connection) {
         Ok(note) => {
             if let Some(time) = note.expired_at {
                 if time <= SystemTime::now() {
-                    diesel::delete(table.filter(id.eq(note_id))).execute(&connection)?;
+                    diesel::delete(notes.filter(id.eq(note_id))).execute(&connection)?;
                     return Err(ServerError::NotFound(note_id.to_string()));
                 }
             }
@@ -98,36 +97,36 @@ pub async fn decrypt(
 }
 
 pub async fn del(
-    web::Path(_note_id): web::Path<i32>,
-    _input: web::Json<PasswordField>,
-    _pool: web::Data<Pool>,
+    web::Path(note_id): web::Path<i32>,
+    input: web::Json<PasswordField>,
+    pool: web::Data<Pool>,
     _req: web::HttpRequest,
 ) -> Result<HttpResponse, ServerError> {
-    let connection = _pool.get()?;
+    let connection = pool.get()?;
     // let token = get_token(req);
     // Ok(HttpResponse::Ok().json(token))
 
-    match table.find(_note_id).get_result::<QueryNote>(&connection) {
+    match notes.find(note_id).get_result::<QueryNote>(&connection) {
         Ok(note) => {
             if let Some(password_hash) = note.password {
-                if let Some(password) = &_input.0.password {
+                if let Some(password) = &input.0.password {
                     if !is_password_valid(password_hash, password)? {
-                        return Err(ServerError::InvalidCred);
+                        return Err(ServerError::InvalidCredentials);
                     }
                 } else {
                     return Err(ServerError::UserError(vec![errors::Fields::Password(
-                        errors::Error::Empty,
+                        errors::CommonError::Empty,
                     )]));
                 }
             }
 
-            diesel::delete(table.filter(id.eq(note.id))).execute(&connection)?;
+            diesel::delete(notes.filter(id.eq(note.id))).execute(&connection)?;
             Ok(HttpResponse::Ok().json(json!({
                 "id": note.id,
             })))
         }
         Err(err) => match err {
-            diesel::result::Error::NotFound => Err(ServerError::NotFound(_note_id.to_string())),
+            diesel::result::Error::NotFound => Err(ServerError::NotFound(note_id.to_string())),
             _ => Err(ServerError::DieselError),
         },
     }
