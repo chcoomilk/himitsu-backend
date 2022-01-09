@@ -3,23 +3,11 @@ table! {
         id -> Int4,
         title -> Varchar,
         content -> Varchar,
-        encryption -> Bool,
         password -> Nullable<Varchar>,
-        does_expire -> Bool,
+        encryption -> Bool,
         created_at -> Timestamp,
         expired_at -> Nullable<Timestamp>,
         updated_at -> Timestamp,
-    }
-}
-
-table! {
-    plain_notes (id) {
-        id -> Varchar,
-        title -> Varchar,
-        content -> Varchar,
-        is_encrypted -> Bool,
-        created_at -> Timestamp,
-        expired_at -> Timestamp,
     }
 }
 
@@ -47,7 +35,6 @@ joinable!(user_notes -> users (user_id));
 
 allow_tables_to_appear_in_same_query!(
     notes,
-    plain_notes,
     user_notes,
     users,
 );
