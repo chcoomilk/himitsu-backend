@@ -33,14 +33,14 @@ async fn main() -> std::io::Result<()> {
     let interval = std::env::var("CLEANUP_INTERVAL")
         .unwrap_or("2700".to_string())
         .parse::<u64>()
-        .expect("CLEANUP_INTERVAL must be postive integer");
+        .expect("CLEANUP_INTERVAL must be an unsigned 64-bit integer");
     let connection = pool.get().unwrap();
     std::thread::spawn(move || loop {
-        std::thread::sleep(std::time::Duration::from_secs(interval));
         use schema::notes::dsl::notes;
         diesel::delete(notes.filter(schema::notes::expired_at.le(SystemTime::now())))
             .execute(&connection)
             .unwrap();
+        std::thread::sleep(std::time::Duration::from_secs(interval));
     });
 
     let port = std::env::var("PORT").unwrap_or("8080".to_string());

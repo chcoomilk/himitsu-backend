@@ -5,17 +5,14 @@ use serde_json::json;
 use std::time::SystemTime;
 
 use crate::errors::{self, ServerError};
-use crate::models::note::{QueryNote, QueryNoteInfo, ReqNote, ResNote};
+use crate::models::note::{QueryNote, QueryNoteInfo, NewNote, ResNote};
 use crate::schema;
-use crate::utils::is_password_valid;
 use crate::Pool;
 
-use schema::notes::{
-    dsl::{encryption, expired_at, id, notes, title, password},
-};
+use schema::notes::dsl::{expired_at, backend_encryption, frontend_encryption, id, notes, title};
 
 pub async fn new(
-    input: web::Json<ReqNote>,
+    input: web::Json<NewNote>,
     pool: web::Data<Pool>,
 ) -> Result<HttpResponse, ServerError> {
     let connection = pool.get()?;
@@ -34,7 +31,7 @@ pub async fn new(
 
     let result = diesel::insert_into(notes)
         .values(uinput.into_insert()?)
-        .returning((id, title, encryption, password, expired_at))
+        .returning((id, title, backend_encryption, frontend_encryption, expired_at))
         .get_results::<QueryNoteInfo>(&connection)?;
     let response = result[0].to_owned().into_response();
     Ok(HttpResponse::Created().json(json!(response)))
@@ -47,7 +44,7 @@ pub async fn get_info(
     let connection = pool.get()?;
 
     match notes
-        .select((id, title, encryption, password, expired_at))
+        .select((id, title, backend_encryption, frontend_encryption, expired_at))
         .filter(id.eq(note_id))
         .first::<QueryNoteInfo>(&connection)
     {
@@ -66,13 +63,13 @@ pub async fn get_info(
 }
 
 #[derive(Deserialize)]
-pub struct PasswordField {
-    pub password: Option<String>,
+pub struct PassphraseField {
+    pub passphrase: Option<String>,
 }
 
 pub async fn decrypt(
     web::Path(note_id): web::Path<i32>,
-    input: web::Json<PasswordField>,
+    input: web::Json<PassphraseField>,
     pool: web::Data<Pool>,
 ) -> Result<HttpResponse, ServerError> {
     let connection = pool.get()?;
@@ -86,7 +83,7 @@ pub async fn decrypt(
                 }
             }
 
-            let result: ResNote = note.try_decrypt(input.0.password)?;
+            let result: ResNote = note.try_decrypt(input.0.passphrase)?;
 
             Ok(HttpResponse::Ok().json(json!(result)))
         }
@@ -99,31 +96,29 @@ pub async fn decrypt(
 
 pub async fn del(
     web::Path(note_id): web::Path<i32>,
-    input: web::Json<PasswordField>,
+    input: web::Json<PassphraseField>,
     pool: web::Data<Pool>,
     _req: web::HttpRequest,
 ) -> Result<HttpResponse, ServerError> {
     let connection = pool.get()?;
-    // let token = get_token(req);
-    // Ok(HttpResponse::Ok().json(token))
 
     match notes.find(note_id).get_result::<QueryNote>(&connection) {
         Ok(note) => {
-            if let Some(password_hash) = note.password {
-                if let Some(password_input) = &input.0.password {
-                    if !is_password_valid(password_hash, password_input)? {
-                        return Err(ServerError::InvalidCredentials);
-                    }
-                } else {
-                    return Err(ServerError::UserError(vec![errors::Fields::Password(
-                        errors::CommonError::Empty,
-                    )]));
-                }
-            }
-
-            diesel::delete(notes.filter(id.eq(note.id))).execute(&connection)?;
+            // if let Some(passphrase_hash) = note.passphrase {
+            //     if let Some(passphrase_input) = &input.0.passphrase {
+            //         if !is_passphrase_valid(&passphrase_hash, passphrase_input)? {
+            //             return Err(ServerError::InvalidCredentials);
+            //         }
+            //     } else {
+            //         return Err(ServerError::UserError(vec![errors::Fields::Passphrase(
+            //             errors::CommonError::Empty,
+            //         )]));
+            //     }
+            // }
+            let res = note.try_decrypt(input.0.passphrase)?;
+            diesel::delete(notes.filter(id.eq(res.id))).execute(&connection)?;
             Ok(HttpResponse::Ok().json(json!({
-                "id": note.id,
+                "id": res.id,
             })))
         }
         Err(err) => match err {

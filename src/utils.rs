@@ -1,8 +1,6 @@
 use actix_web::{HttpRequest};
-use argon2::{Version, PasswordVerifier, PasswordHash, Argon2, Algorithm, Params};
+// use argon2::{Version, PasswordVerifier, PasswordHash, Argon2, Algorithm, Params};
 use serde::{Deserialize, Serialize};
-
-use crate::errors::ServerError;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Claims {
@@ -19,16 +17,16 @@ pub fn _get_token(req: HttpRequest) -> Option<String> {
     }
 }
 
-pub fn is_password_valid(hash: String, input: &String) -> Result<bool, ServerError> {
-    let secret = std::env::var("SECRET_KEY")?;
-    let parsed_hash = PasswordHash::new(&hash)?;
-    let valid = Argon2::new_with_secret(
-        secret.as_bytes(),
-        Algorithm::default(),
-        Version::default(),
-        Params::default(),
-    )?
-    .verify_password(&input.as_bytes(), &parsed_hash)
-    .is_ok();
-    Ok(valid)
-}
+// pub fn _is_password_valid(hash: &String, input: &String) -> Result<bool, ServerError> {
+//     let secret = std::env::var("SECRET_KEY")?;
+//     let parsed_hash = PasswordHash::new(&hash)?;
+//     let valid = Argon2::new_with_secret(
+//         secret.as_bytes(),
+//         Algorithm::default(),
+//         Version::default(),
+//         Params::default(),
+//     )?
+//     .verify_password(&input.as_bytes(), &parsed_hash)
+//     .is_ok();
+//     Ok(valid)
+// }

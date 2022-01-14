@@ -14,17 +14,16 @@ pub enum CommonError {
 #[serde(rename_all(serialize = "snake_case"), tag = "field", content = "error")]
 pub enum Fields {
     Content(CommonError),
-    Password(CommonError),
+    Passphrase(CommonError),
     LifetimeInSecs(CommonError),
 }
 
 #[derive(Debug, Display)]
 pub enum ServerError {
-    ArgonError,
     DieselError,
     EnvironmentError,
     R2D2Error,
-    MagicCryptError,
+    TinderCryptError,
     InvalidCredentials,
     #[display(fmt = "Bad Request: {:?}", _0)]
     UserError(Vec<Fields>),
@@ -50,30 +49,18 @@ impl From<diesel::result::Error> for ServerError {
     }
 }
 
-impl From<argon2::Error> for ServerError {
-    fn from(_: argon2::Error) -> ServerError {
-        ServerError::ArgonError
-    }
-}
-
-impl From<argon2::password_hash::Error> for ServerError {
-    fn from(_: argon2::password_hash::Error) -> ServerError {
-        ServerError::ArgonError
-    }
-}
-
-impl From<magic_crypt::MagicCryptError> for ServerError {
-    fn from(_: magic_crypt::MagicCryptError) -> ServerError {
-        ServerError::MagicCryptError
+impl From<tindercrypt::errors::Error> for ServerError {
+    fn from(err: tindercrypt::errors::Error) -> ServerError {
+        match err {
+            tindercrypt::errors::Error::DecryptionError => ServerError::InvalidCredentials,
+            _ => ServerError::TinderCryptError
+        }
     }
 }
 
 impl actix_web::error::ResponseError for ServerError {
     fn error_response(&self) -> HttpResponse {
         match self {
-            ServerError::ArgonError => {
-                HttpResponse::InternalServerError().body("Internal Error: Argon2 Error")
-            }
             ServerError::DieselError => {
                 HttpResponse::InternalServerError().body("Internal Error: Diesel Error.")
             }
@@ -83,11 +70,11 @@ impl actix_web::error::ResponseError for ServerError {
             ServerError::R2D2Error => {
                 HttpResponse::InternalServerError().body("Internal Error: Pooling Error.")
             }
-            ServerError::MagicCryptError => {
+            ServerError::TinderCryptError => {
                 HttpResponse::InternalServerError().body("Internal Error: File Decryption Error")
             }
             ServerError::InvalidCredentials => HttpResponse::Unauthorized().json(json!({
-                "error": "wrong username/password"
+                "error": "possibly wrong passphrase"
             })),
             ServerError::UserError(err) => HttpResponse::BadRequest().json(json!(err)),
             ServerError::NotFound(id) => HttpResponse::NotFound().json(json!({

@@ -2,12 +2,12 @@ table! {
     notes (id) {
         id -> Int4,
         title -> Varchar,
-        content -> Varchar,
-        password -> Nullable<Varchar>,
-        encryption -> Bool,
+        content -> Bytea,
+        frontend_encryption -> Bool,
+        backend_encryption -> Bool,
+        updated_at -> Timestamp,
         created_at -> Timestamp,
         expired_at -> Nullable<Timestamp>,
-        updated_at -> Timestamp,
     }
 }
 
