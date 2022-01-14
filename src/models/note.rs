@@ -1,21 +1,38 @@
 use crate::errors::{self, ServerError};
 use crate::schema::notes;
-use crate::utils::is_password_valid;
-use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
-    Algorithm, Argon2, Params, Version,
-};
 use diesel::{Insertable, Queryable};
-use magic_crypt::{new_magic_crypt, MagicCryptTrait};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime};
+use tindercrypt::cryptors::RingCryptor;
 
-#[derive(Clone, Debug, Queryable, Serialize)]
+#[derive(Clone, Debug, Queryable)]
 pub struct QueryNoteInfo {
     pub id: i32,
     pub title: String,
-    pub encryption: bool,
+    pub backend_encryption: bool,
+    pub frontend_encryption: bool,
     pub expired_at: Option<SystemTime>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ResNoteInfo {
+    pub id: i32,
+    pub title: String,
+    pub frontend_encryption: bool,
+    pub backend_encryption: bool,
+    pub expired_at: Option<SystemTime>,
+}
+
+impl QueryNoteInfo {
+    pub fn into_response(self) -> ResNoteInfo {
+        ResNoteInfo {
+            id: self.id,
+            title: self.title,
+            backend_encryption: self.backend_encryption,
+            frontend_encryption: self.frontend_encryption,
+            expired_at: self.expired_at,
+        }
+    }
 }
 
 // match this with table note in schema.rs
@@ -23,12 +40,12 @@ pub struct QueryNoteInfo {
 pub struct QueryNote {
     pub id: i32,
     pub title: String,
-    pub content: String,
-    pub password: Option<String>,
-    pub encryption: bool,
+    pub content: Vec<u8>,
+    pub frontend_encryption: bool,
+    pub backend_encryption: bool,
+    pub updated_at: SystemTime,
     pub created_at: SystemTime,
     pub expired_at: Option<SystemTime>,
-    pub updated_at: SystemTime,
 }
 
 #[derive(Clone, Serialize)]
@@ -36,69 +53,60 @@ pub struct ResNote {
     pub id: i32,
     pub title: String,
     pub content: String,
-    pub encryption: bool,
-    pub decrypted: bool,
+    pub frontend_encryption: bool,
+    pub backend_encryption: bool,
+    pub updated_at: SystemTime,
     pub created_at: SystemTime,
     pub expired_at: Option<SystemTime>,
-    pub updated_at: SystemTime,
 }
 
 impl QueryNote {
-    fn omit_fields(self, decrypted: bool) -> ResNote {
-        return ResNote {
-            id: self.id,
-            title: self.title,
-            content: self.content,
-            encryption: self.encryption,
-            decrypted,
-            created_at: self.created_at,
-            updated_at: self.updated_at,
-            expired_at: self.expired_at,
-        };
-    }
-
-    pub fn try_decrypt(mut self, password_input: Option<String>) -> Result<ResNote, ServerError> {
-        if self.encryption {
-            if let Some(password_hash) = self.password.clone() {
-                if let Some(password) = password_input {
-                    if password.len() <= 4 {
-                        return Err(ServerError::UserError(vec![errors::Fields::Password(
-                            errors::CommonError::TooShort,
-                        )]));
-                    } else if password.len() > 1024 {
-                        return Err(ServerError::UserError(vec![errors::Fields::Password(
-                            errors::CommonError::TooLong,
-                        )]))
-                    }
-
-                    if is_password_valid(password_hash, &password)? {
-                        let mc = new_magic_crypt!(password, 256);
-                        self.content = mc.decrypt_base64_to_string(self.content)?;
-                    } else {
-                        return Err(ServerError::InvalidCredentials);
-                    }
-
-                    Ok(self.omit_fields(true))
+    pub fn try_decrypt(self, passphrase_input: Option<String>) -> Result<ResNote, ServerError> {
+        if self.backend_encryption {
+            if let Some(passphrase) = passphrase_input {
+                if passphrase.len() < 4 || passphrase.len() >= 1024 {
+                    Err(ServerError::InvalidCredentials)
                 } else {
-                    return Err(ServerError::UserError(vec![errors::Fields::Password(
-                        errors::CommonError::Empty,
-                    )]));
+                    let cryptor = RingCryptor::new();
+                    let content_in_bytes = cryptor.open(passphrase.as_bytes(), &self.content)?;
+                    match String::from_utf8(content_in_bytes) {
+                        Ok(content) => Ok(ResNote {
+                            id: self.id,
+                            title: self.title,
+                            content,
+                            frontend_encryption: self.frontend_encryption,
+                            backend_encryption: true,
+                            created_at: self.created_at,
+                            updated_at: self.updated_at,
+                            expired_at: self.expired_at,
+                        }),
+                        Err(_) => Err(ServerError::TinderCryptError),
+                    }
                 }
             } else {
-                Ok(self.omit_fields(false))
+                Err(ServerError::InvalidCredentials)
             }
         } else {
-            Ok(self.omit_fields(true))
+            Ok(ResNote {
+                id: self.id,
+                title: self.title,
+                content: String::from_utf8(self.content).unwrap(),
+                frontend_encryption: self.frontend_encryption,
+                backend_encryption: false,
+                created_at: self.created_at,
+                updated_at: self.updated_at,
+                expired_at: self.expired_at,
+            })
         }
     }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct ReqNote {
+pub struct NewNote {
     pub title: String,
     pub content: String,
-    pub password: Option<String>,
-    pub encryption: bool,
+    pub passphrase: Option<String>,
+    pub is_currently_encrypted: bool,
     pub lifetime_in_secs: Option<u64>,
 }
 
@@ -106,50 +114,20 @@ pub struct ReqNote {
 #[table_name = "notes"]
 pub struct InsertNote {
     pub title: String,
-    pub content: String,
-    pub encryption: bool,
-    pub password: Option<String>,
+    pub content: Vec<u8>,
+    pub frontend_encryption: bool,
+    pub backend_encryption: bool,
     pub created_at: SystemTime,
     pub expired_at: Option<SystemTime>,
     pub updated_at: SystemTime,
 }
 
-impl ReqNote {
-    fn encrypt(mut self, password: String) -> Result<Self, ServerError> {
-        if password.len() <= 4 {
-            return Err(ServerError::UserError(vec![errors::Fields::Password(
-                errors::CommonError::TooShort,
-            )]));
-        } else if password.len() > 1024 {
-            return Err(ServerError::UserError(vec![errors::Fields::Password(
-                errors::CommonError::TooLong,
-            )]))
-        }
-
-        let secret = std::env::var("SECRET_KEY")?;
-
-        let mc = new_magic_crypt!(&password, 256);
-
-        let hashed_password = Argon2::new_with_secret(
-            secret.as_bytes(),
-            Algorithm::default(),
-            Version::default(),
-            Params::default(),
-        )?
-        .hash_password(password.as_bytes(), &SaltString::generate(&mut OsRng))?
-        .to_string();
-
-        self.content = mc.encrypt_str_to_base64(self.content);
-        self.password = Some(hashed_password);
-
-        Ok(self)
-    }
-
-    pub fn into_insert(mut self) -> Result<InsertNote, ServerError> {
+impl NewNote {
+    pub fn into_insert(self) -> Result<InsertNote, ServerError> {
         let time_now = SystemTime::now();
         let expiry_time = match self.lifetime_in_secs {
             Some(duration) => {
-                // delete this if diesel can finally save some big length of date
+                // delete this if diesel can finally save some big length of time
                 if duration > u32::MAX as u64 {
                     return Err(ServerError::UserError(vec![
                         errors::Fields::LifetimeInSecs(errors::CommonError::TooLong),
@@ -175,22 +153,42 @@ impl ReqNote {
             None => None,
         };
 
-        if self.encryption {
-            if let Some(password) = self.password.clone() {
-                self = self.encrypt(password)?;
+        if let Some(passphrase) = self.passphrase.clone() {
+            if passphrase.len() < 4 {
+                return Err(ServerError::UserError(vec![errors::Fields::Passphrase(
+                    errors::CommonError::TooShort,
+                )]));
+            } else if passphrase.len() >= 1024 {
+                return Err(ServerError::UserError(vec![errors::Fields::Passphrase(
+                    errors::CommonError::TooLong,
+                )]));
             }
-        } else {
-            self.password = None;
-        }
 
-        Ok(InsertNote {
-            title: self.title,
-            content: self.content,
-            encryption: self.encryption,
-            password: self.password,
-            created_at: time_now,
-            updated_at: time_now,
-            expired_at: expiry_time,
-        })
+            let cryptor = RingCryptor::new();
+
+            let encrypted_content = cryptor
+                .seal_with_passphrase(passphrase.as_bytes(), self.content.as_bytes())
+                .unwrap();
+
+            Ok(InsertNote {
+                title: self.title,
+                content: encrypted_content,
+                backend_encryption: true,
+                frontend_encryption: self.is_currently_encrypted,
+                created_at: time_now,
+                updated_at: time_now,
+                expired_at: expiry_time,
+            })
+        } else {
+            Ok(InsertNote {
+                title: self.title,
+                content: self.content.into_bytes(),
+                backend_encryption: false,
+                frontend_encryption: self.is_currently_encrypted,
+                created_at: time_now,
+                updated_at: time_now,
+                expired_at: expiry_time,
+            })
+        }
     }
 }
