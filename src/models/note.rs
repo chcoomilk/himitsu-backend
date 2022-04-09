@@ -1,7 +1,7 @@
 use crate::errors::{self, ServerError};
 use crate::schema::notes;
 use diesel::{Insertable, Queryable};
-use serde::{Deserialize, Serialize};
+use serde_derive::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime};
 use tindercrypt::cryptors::RingCryptor;
 
@@ -20,6 +20,8 @@ pub struct ResNoteInfo {
     pub title: String,
     pub frontend_encryption: bool,
     pub backend_encryption: bool,
+    // pub updated_at: SystemTime,
+    // pub created_at: SystemTime,
     pub expired_at: Option<SystemTime>,
 }
 

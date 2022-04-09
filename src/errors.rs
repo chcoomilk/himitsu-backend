@@ -1,6 +1,6 @@
 use actix_web::HttpResponse;
 use derive_more::Display;
-use serde::Serialize;
+use serde_derive::Serialize;
 use serde_json::json;
 
 #[derive(Debug, Serialize)]

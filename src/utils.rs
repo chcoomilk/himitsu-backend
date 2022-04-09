@@ -1,6 +1,6 @@
 use actix_web::{HttpRequest};
 // use argon2::{Version, PasswordVerifier, PasswordHash, Argon2, Algorithm, Params};
-use serde::{Deserialize, Serialize};
+use serde_derive::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Claims {
