@@ -60,7 +60,8 @@ async fn main() -> std::io::Result<()> {
                     .route("/new/", web::post().to(handlers::note::new))
                     .route("/{id}", web::delete().to(handlers::note::del))
                     .route("/{id}", web::get().to(handlers::note::get_info))
-                    .route("/{id}", web::post().to(handlers::note::decrypt)),
+                    .route("/{id}", web::post().to(handlers::note::decrypt))
+                    .route("", web::get().to(handlers::note::get_by_title))
             )
     })
     .bind(address)?

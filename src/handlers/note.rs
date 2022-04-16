@@ -4,12 +4,12 @@ use serde_derive::Deserialize;
 use serde_json::json;
 use std::time::SystemTime;
 
+use super::Pool;
 use crate::{
     errors::{self, ServerError},
-    models::note::{NewNote, QueryNote, QueryNoteInfo, ResNote},
+    models::note::{NewNote, QueryNote, ResNote, NoteInfo},
     schema,
 };
-use super::Pool;
 
 use schema::notes::dsl::{backend_encryption, expired_at, frontend_encryption, id, notes, title};
 
@@ -21,14 +21,12 @@ pub async fn new(
     let uinput = input.0;
     let mut err_vec: Vec<errors::Fields> = Vec::new();
 
-    {
-        if uinput.content.is_empty() {
-            err_vec.push(errors::Fields::Content(errors::CommonError::Empty));
-        }
+    if uinput.content.is_empty() {
+        err_vec.push(errors::Fields::Content(errors::CommonError::Empty));
+    }
 
-        if !err_vec.is_empty() {
-            return Err(ServerError::UserError(err_vec));
-        }
+    if !err_vec.is_empty() {
+        return Err(ServerError::UserError(err_vec));
     }
 
     let result = diesel::insert_into(notes)
@@ -40,8 +38,8 @@ pub async fn new(
             frontend_encryption,
             expired_at,
         ))
-        .get_results::<QueryNoteInfo>(&connection)?;
-    let response = result[0].to_owned().into_response();
+        .get_results::<NoteInfo>(&connection)?;
+    let response = result[0].to_owned();
     Ok(HttpResponse::Created().json(json!(response)))
 }
 
@@ -59,8 +57,8 @@ pub async fn get_info(
             frontend_encryption,
             expired_at,
         ))
-        .filter(id.eq(note_id.to_owned()))
-        .first::<QueryNoteInfo>(&connection)
+        .find(note_id.to_owned())
+        .get_result::<NoteInfo>(&connection)
     {
         Ok(note) => {
             if let Some(time) = note.expired_at {
@@ -70,7 +68,7 @@ pub async fn get_info(
                 }
             }
 
-            Ok(HttpResponse::Ok().json(json!(note.into_response())))
+            Ok(HttpResponse::Ok().json(json!(note)))
         }
         Err(_) => Err(ServerError::NotFound(note_id.to_string())),
     }
@@ -124,17 +122,6 @@ pub async fn del(
         .get_result::<QueryNote>(&connection)
     {
         Ok(note) => {
-            // if let Some(passphrase_hash) = note.passphrase {
-            //     if let Some(passphrase_input) = &input.0.passphrase {
-            //         if !is_passphrase_valid(&passphrase_hash, passphrase_input)? {
-            //             return Err(ServerError::InvalidCredentials);
-            //         }
-            //     } else {
-            //         return Err(ServerError::UserError(vec![errors::Fields::Passphrase(
-            //             errors::CommonError::Empty,
-            //         )]));
-            //     }
-            // }
             let res = note.try_decrypt(input.0.passphrase)?;
             diesel::delete(notes.filter(id.eq(res.id))).execute(&connection)?;
             Ok(HttpResponse::Ok().json(json!({
@@ -147,3 +134,35 @@ pub async fn del(
         },
     }
 }
+
+#[derive(Deserialize)]
+pub struct TitleParameterQuery {
+    pub title: String,
+}
+pub async fn get_by_title(
+    input: web::Query<TitleParameterQuery>,
+    pool: web::Data<Pool>,
+) -> Result<HttpResponse, ServerError> {
+    let connection = pool.get()?;
+
+    match notes
+        .select((
+            id,
+            title,
+            backend_encryption,
+            frontend_encryption,
+            expired_at,
+        ))
+        .filter(title.ilike(&input.title))
+        .get_results::<NoteInfo>(&connection)
+    {
+        Ok(notes_vec) => {
+            Ok(HttpResponse::Ok().json(json!({
+                "data": notes_vec,
+            })))
+        }
+        Err(_) => Err(ServerError::NotFound(input.0.title)),
+    }
+}
+
+// pub async fn socket()

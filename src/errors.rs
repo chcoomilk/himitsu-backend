@@ -77,8 +77,8 @@ impl actix_web::error::ResponseError for ServerError {
                 "error": "possibly wrong passphrase"
             })),
             ServerError::UserError(err) => HttpResponse::BadRequest().json(json!(err)),
-            ServerError::NotFound(id) => HttpResponse::NotFound().json(json!({
-                "id": id,
+            ServerError::NotFound(keyword) => HttpResponse::NotFound().json(json!({
+                "query": keyword,
             })),
         }
     }

@@ -5,8 +5,8 @@ use serde_derive::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime};
 use tindercrypt::cryptors::RingCryptor;
 
-#[derive(Clone, Debug, Queryable)]
-pub struct QueryNoteInfo {
+#[derive(Clone, Debug, Queryable, Serialize)]
+pub struct NoteInfo {
     pub id: i32,
     pub title: String,
     pub backend_encryption: bool,
@@ -14,28 +14,28 @@ pub struct QueryNoteInfo {
     pub expired_at: Option<SystemTime>,
 }
 
-#[derive(Clone, Debug, Serialize)]
-pub struct ResNoteInfo {
-    pub id: i32,
-    pub title: String,
-    pub frontend_encryption: bool,
-    pub backend_encryption: bool,
-    // pub updated_at: SystemTime,
-    // pub created_at: SystemTime,
-    pub expired_at: Option<SystemTime>,
-}
+// #[derive(Clone, Debug, Serialize)]
+// pub struct ResNoteInfo {
+//     pub id: i32,
+//     pub title: String,
+//     pub frontend_encryption: bool,
+//     pub backend_encryption: bool,
+//     // pub updated_at: SystemTime,
+//     // pub created_at: SystemTime,
+//     pub expired_at: Option<SystemTime>,
+// }
 
-impl QueryNoteInfo {
-    pub fn into_response(self) -> ResNoteInfo {
-        ResNoteInfo {
-            id: self.id,
-            title: self.title,
-            backend_encryption: self.backend_encryption,
-            frontend_encryption: self.frontend_encryption,
-            expired_at: self.expired_at,
-        }
-    }
-}
+// impl QueryNoteInfo {
+//     pub fn into_response(self) -> ResNoteInfo {
+//         ResNoteInfo {
+//             id: self.id,
+//             title: self.title,
+//             backend_encryption: self.backend_encryption,
+//             frontend_encryption: self.frontend_encryption,
+//             expired_at: self.expired_at,
+//         }
+//     }
+// }
 
 // match this with table note in schema.rs
 #[derive(Clone, Debug, Queryable)]
