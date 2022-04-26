@@ -14,29 +14,6 @@ pub struct NoteInfo {
     pub expired_at: Option<SystemTime>,
 }
 
-// #[derive(Clone, Debug, Serialize)]
-// pub struct ResNoteInfo {
-//     pub id: i32,
-//     pub title: String,
-//     pub frontend_encryption: bool,
-//     pub backend_encryption: bool,
-//     // pub updated_at: SystemTime,
-//     // pub created_at: SystemTime,
-//     pub expired_at: Option<SystemTime>,
-// }
-
-// impl QueryNoteInfo {
-//     pub fn into_response(self) -> ResNoteInfo {
-//         ResNoteInfo {
-//             id: self.id,
-//             title: self.title,
-//             backend_encryption: self.backend_encryption,
-//             frontend_encryption: self.frontend_encryption,
-//             expired_at: self.expired_at,
-//         }
-//     }
-// }
-
 // match this with table note in schema.rs
 #[derive(Clone, Debug, Queryable)]
 pub struct QueryNote {
@@ -104,7 +81,7 @@ impl QueryNote {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct NewNote {
+pub struct IncomingNewNote {
     pub title: String,
     pub content: String,
     pub passphrase: Option<String>,
@@ -114,7 +91,7 @@ pub struct NewNote {
 
 #[derive(Insertable)]
 #[table_name = "notes"]
-pub struct InsertNote {
+pub struct InsertableNote {
     pub title: String,
     pub content: Vec<u8>,
     pub frontend_encryption: bool,
@@ -124,8 +101,8 @@ pub struct InsertNote {
     pub updated_at: SystemTime,
 }
 
-impl NewNote {
-    pub fn into_insert(self) -> Result<InsertNote, ServerError> {
+impl IncomingNewNote {
+    pub fn into_insertable(self) -> Result<InsertableNote, ServerError> {
         let time_now = SystemTime::now();
         let expiry_time = match self.lifetime_in_secs {
             Some(duration) => {
@@ -172,7 +149,7 @@ impl NewNote {
                 .seal_with_passphrase(passphrase.as_bytes(), self.content.as_bytes())
                 .unwrap();
 
-            Ok(InsertNote {
+            Ok(InsertableNote {
                 title: self.title,
                 content: encrypted_content,
                 backend_encryption: true,
@@ -182,7 +159,7 @@ impl NewNote {
                 expired_at: expiry_time,
             })
         } else {
-            Ok(InsertNote {
+            Ok(InsertableNote {
                 title: self.title,
                 content: self.content.into_bytes(),
                 backend_encryption: false,

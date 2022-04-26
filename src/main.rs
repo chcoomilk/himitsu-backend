@@ -1,3 +1,5 @@
+use std::sync::atomic::AtomicUsize;
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use actix_cors::Cors;
@@ -14,7 +16,6 @@ mod errors;
 mod handlers;
 mod models;
 mod schema;
-mod utils;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -35,10 +36,13 @@ async fn main() -> std::io::Result<()> {
         std::thread::sleep(std::time::Duration::from_secs(env.cleanup_interval));
     });
 
+    let app_state = Arc::new(AtomicUsize::new(0));
+
     HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(env.clone()))
             .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(app_state.clone()))
             .route("/", web::get().to(handlers::index))
             .wrap(
                 Cors::default()
@@ -61,7 +65,7 @@ async fn main() -> std::io::Result<()> {
                     .route("/{id}", web::delete().to(handlers::note::del))
                     .route("/{id}", web::get().to(handlers::note::get_info))
                     .route("/{id}", web::post().to(handlers::note::decrypt))
-                    .route("", web::get().to(handlers::note::get_by_title))
+                    .route("", web::get().to(handlers::note::get_by_title)),
             )
     })
     .bind(address)?

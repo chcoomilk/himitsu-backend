@@ -28,7 +28,7 @@ pub enum ServerError {
     #[display(fmt = "Bad Request: {:?}", _0)]
     UserError(Vec<Fields>),
     #[display(fmt = "Not Found")]
-    NotFound(String),
+    NotFound(Option<String>),
 }
 
 impl From<r2d2::Error> for ServerError {
@@ -78,7 +78,7 @@ impl actix_web::error::ResponseError for ServerError {
             })),
             ServerError::UserError(err) => HttpResponse::BadRequest().json(json!(err)),
             ServerError::NotFound(keyword) => HttpResponse::NotFound().json(json!({
-                "query": keyword,
+                "query": keyword.as_ref().unwrap_or(&"Empty Set".to_string()),
             })),
         }
     }

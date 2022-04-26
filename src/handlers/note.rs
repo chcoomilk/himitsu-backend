@@ -7,14 +7,14 @@ use std::time::SystemTime;
 use super::Pool;
 use crate::{
     errors::{self, ServerError},
-    models::note::{NewNote, QueryNote, ResNote, NoteInfo},
+    models::note::{IncomingNewNote, NoteInfo, QueryNote, ResNote},
     schema,
 };
 
 use schema::notes::dsl::{backend_encryption, expired_at, frontend_encryption, id, notes, title};
 
 pub async fn new(
-    input: web::Json<NewNote>,
+    input: web::Json<IncomingNewNote>,
     pool: web::Data<Pool>,
 ) -> Result<HttpResponse, ServerError> {
     let connection = pool.get()?;
@@ -30,7 +30,7 @@ pub async fn new(
     }
 
     let result = diesel::insert_into(notes)
-        .values(uinput.into_insert()?)
+        .values(uinput.into_insertable()?)
         .returning((
             id,
             title,
@@ -64,13 +64,13 @@ pub async fn get_info(
             if let Some(time) = note.expired_at {
                 if time <= SystemTime::now() {
                     diesel::delete(notes.filter(id.eq(note_id.to_owned()))).execute(&connection)?;
-                    return Err(ServerError::NotFound(note_id.to_string()));
+                    return Err(ServerError::NotFound(Some(note_id.to_string())));
                 }
             }
 
             Ok(HttpResponse::Ok().json(json!(note)))
         }
-        Err(_) => Err(ServerError::NotFound(note_id.to_string())),
+        Err(_) => Err(ServerError::NotFound(Some(note_id.to_string()))),
     }
 }
 
@@ -94,7 +94,7 @@ pub async fn decrypt(
             if let Some(time) = note.expired_at {
                 if time <= SystemTime::now() {
                     diesel::delete(notes.filter(id.eq(note_id.to_owned()))).execute(&connection)?;
-                    return Err(ServerError::NotFound(note_id.to_string()));
+                    return Err(ServerError::NotFound(Some(note_id.to_string())));
                 }
             }
 
@@ -103,7 +103,9 @@ pub async fn decrypt(
             Ok(HttpResponse::Ok().json(json!(result)))
         }
         Err(err) => match err {
-            diesel::result::Error::NotFound => Err(ServerError::NotFound(note_id.to_string())),
+            diesel::result::Error::NotFound => {
+                Err(ServerError::NotFound(Some(note_id.to_string())))
+            }
             _ => Err(ServerError::DieselError),
         },
     }
@@ -129,7 +131,9 @@ pub async fn del(
             })))
         }
         Err(err) => match err {
-            diesel::result::Error::NotFound => Err(ServerError::NotFound(note_id.to_string())),
+            diesel::result::Error::NotFound => {
+                Err(ServerError::NotFound(Some(note_id.to_string())))
+            }
             _ => Err(ServerError::DieselError),
         },
     }
@@ -138,6 +142,8 @@ pub async fn del(
 #[derive(Deserialize)]
 pub struct TitleParameterQuery {
     pub title: String,
+    pub offset: Option<i64>,
+    pub limit: Option<i64>,
 }
 pub async fn get_by_title(
     input: web::Query<TitleParameterQuery>,
@@ -153,15 +159,14 @@ pub async fn get_by_title(
             frontend_encryption,
             expired_at,
         ))
+        .offset(input.0.offset.unwrap_or(0))
+        .limit(input.0.limit.unwrap_or(5))
+        .order(id)
         .filter(title.ilike(&input.title))
         .get_results::<NoteInfo>(&connection)
     {
-        Ok(notes_vec) => {
-            Ok(HttpResponse::Ok().json(json!({
-                "data": notes_vec,
-            })))
-        }
-        Err(_) => Err(ServerError::NotFound(input.0.title)),
+        Ok(notes_vec) => Ok(HttpResponse::Ok().json(json!(notes_vec))),
+        Err(_) => Err(ServerError::NotFound(Some(input.title.clone()))),
     }
 }
 
