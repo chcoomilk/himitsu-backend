@@ -12,9 +12,9 @@ pub struct NoteInfo {
     pub backend_encryption: bool,
     pub frontend_encryption: bool,
     pub expired_at: Option<SystemTime>,
+    pub created_at: SystemTime,
 }
 
-// match this with table note in schema.rs
 #[derive(Clone, Debug, Queryable)]
 pub struct QueryNote {
     pub id: i32,
@@ -150,7 +150,7 @@ impl IncomingNewNote {
                 .unwrap();
 
             Ok(InsertableNote {
-                title: self.title,
+                title: self.title.trim().to_string(),
                 content: encrypted_content,
                 backend_encryption: true,
                 frontend_encryption: self.is_currently_encrypted,
