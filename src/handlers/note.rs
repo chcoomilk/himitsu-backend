@@ -11,7 +11,9 @@ use crate::{
     schema,
 };
 
-use schema::notes::dsl::{backend_encryption, expired_at, frontend_encryption, id, notes, title};
+use schema::notes::dsl::{
+    backend_encryption, created_at, expired_at, frontend_encryption, id, notes, title,
+};
 
 pub async fn new(
     input: web::Json<IncomingNewNote>,
@@ -37,6 +39,7 @@ pub async fn new(
             backend_encryption,
             frontend_encryption,
             expired_at,
+            created_at,
         ))
         .get_results::<NoteInfo>(&connection)?;
     let response = result[0].to_owned();
@@ -56,6 +59,7 @@ pub async fn get_info(
             backend_encryption,
             frontend_encryption,
             expired_at,
+            created_at,
         ))
         .find(note_id.to_owned())
         .get_result::<NoteInfo>(&connection)
@@ -158,11 +162,18 @@ pub async fn get_by_title(
             backend_encryption,
             frontend_encryption,
             expired_at,
+            created_at,
         ))
         .offset(input.0.offset.unwrap_or(0))
         .limit(input.0.limit.unwrap_or(5))
         .order(id)
-        .filter(title.ilike(&input.title))
+        .filter(
+            title.ilike(&input.title).and(
+                backend_encryption
+                    .eq(false)
+                    .and(frontend_encryption.eq(false)),
+            ),
+        )
         .get_results::<NoteInfo>(&connection)
     {
         Ok(notes_vec) => Ok(HttpResponse::Ok().json(json!(notes_vec))),
