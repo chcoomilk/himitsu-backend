@@ -144,13 +144,13 @@ pub async fn del(
 }
 
 #[derive(Deserialize)]
-pub struct TitleParameterQuery {
+pub struct FilterParameterQuery {
     pub title: String,
     pub offset: Option<i64>,
     pub limit: Option<i64>,
 }
-pub async fn get_by_title(
-    input: web::Query<TitleParameterQuery>,
+pub async fn filter_get(
+    input: web::Query<FilterParameterQuery>,
     pool: web::Data<Pool>,
 ) -> Result<HttpResponse, ServerError> {
     let connection = pool.get()?;
