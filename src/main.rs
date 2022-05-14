@@ -61,11 +61,11 @@ async fn main() -> std::io::Result<()> {
             .wrap(Logger::default())
             .service(
                 web::scope("/notes")
-                    .route("/new/", web::post().to(handlers::note::new))
+                    .route("", web::post().to(handlers::note::new))
+                    .route("", web::get().to(handlers::note::filter_get))
                     .route("/{id}", web::delete().to(handlers::note::del))
                     .route("/{id}", web::get().to(handlers::note::get_info))
-                    .route("/{id}", web::post().to(handlers::note::decrypt))
-                    .route("", web::get().to(handlers::note::get_by_title)),
+                    .route("/{id}", web::post().to(handlers::note::decrypt)),
             )
     })
     .bind(address)?
