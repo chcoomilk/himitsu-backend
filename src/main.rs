@@ -12,6 +12,8 @@ use diesel::r2d2::ConnectionManager;
 #[macro_use]
 extern crate diesel;
 
+// use crate::diesel;
+
 mod errors;
 mod handlers;
 mod models;
@@ -30,7 +32,7 @@ async fn main() -> std::io::Result<()> {
     let connection = pool.get().unwrap();
     std::thread::spawn(move || loop {
         use schema::notes::dsl::notes;
-        diesel::delete(notes.filter(schema::notes::expired_at.le(SystemTime::now())))
+        diesel::delete(notes.filter(schema::notes::expires_at.le(SystemTime::now())))
             .execute(&connection)
             .unwrap();
         std::thread::sleep(std::time::Duration::from_secs(env.cleanup_interval));
@@ -61,8 +63,9 @@ async fn main() -> std::io::Result<()> {
             .wrap(Logger::default())
             .service(
                 web::scope("/notes")
-                    .route("", web::post().to(handlers::note::new))
-                    .route("", web::get().to(handlers::note::filter_get))
+                .service(handlers::note::post::new)
+                    // .route("", web::post().to(handlers::note::new))
+                    .route("", web::get().to(handlers::note::search_by_title))
                     .route("/{id}", web::delete().to(handlers::note::del))
                     .route("/{id}", web::get().to(handlers::note::get_info))
                     .route("/{id}", web::post().to(handlers::note::decrypt)),

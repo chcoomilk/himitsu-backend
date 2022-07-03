@@ -5,59 +5,63 @@ use serde_derive::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime};
 use tindercrypt::cryptors::RingCryptor;
 
+// Non-sensitive way of getting a note
 #[derive(Clone, Debug, Queryable, Serialize)]
 pub struct NoteInfo {
-    pub id: i32,
+    pub id: String,
     pub title: String,
     pub backend_encryption: bool,
     pub frontend_encryption: bool,
-    pub expired_at: Option<SystemTime>,
+    pub expires_at: Option<SystemTime>,
     pub created_at: SystemTime,
 }
 
+// Raw note
 #[derive(Clone, Debug, Queryable)]
 pub struct QueryNote {
-    pub id: i32,
+    pub id: String,
     pub title: String,
     pub content: Vec<u8>,
+    pub discoverable: bool,
     pub frontend_encryption: bool,
     pub backend_encryption: bool,
     pub updated_at: SystemTime,
     pub created_at: SystemTime,
-    pub expired_at: Option<SystemTime>,
+    pub expires_at: Option<SystemTime>,
 }
 
+// Turn into
 #[derive(Clone, Serialize)]
 pub struct ResNote {
-    pub id: i32,
+    pub id: String,
     pub title: String,
     pub content: String,
     pub frontend_encryption: bool,
     pub backend_encryption: bool,
     pub updated_at: SystemTime,
     pub created_at: SystemTime,
-    pub expired_at: Option<SystemTime>,
+    pub expires_at: Option<SystemTime>,
 }
 
 impl QueryNote {
-    pub fn try_decrypt(self, passphrase_input: Option<String>) -> Result<ResNote, ServerError> {
+    pub fn try_decrypt(&self, passphrase_input: &String) -> Result<ResNote, ServerError> {
         if self.backend_encryption {
-            if let Some(passphrase) = passphrase_input {
-                if passphrase.len() < 4 || passphrase.len() >= 1024 {
+            if !passphrase_input.is_empty() {
+                if passphrase_input.len() < 4 || passphrase_input.len() >= 1024 {
                     Err(ServerError::InvalidCredentials)
                 } else {
                     let cryptor = RingCryptor::new();
-                    let content_in_bytes = cryptor.open(passphrase.as_bytes(), &self.content)?;
+                    let content_in_bytes = cryptor.open(passphrase_input.as_bytes(), &self.content)?;
                     match String::from_utf8(content_in_bytes) {
                         Ok(content) => Ok(ResNote {
-                            id: self.id,
-                            title: self.title,
+                            id: self.id.to_owned(),
+                            title: self.title.to_owned(),
                             content,
                             frontend_encryption: self.frontend_encryption,
                             backend_encryption: true,
                             created_at: self.created_at,
                             updated_at: self.updated_at,
-                            expired_at: self.expired_at,
+                            expires_at: self.expires_at,
                         }),
                         Err(_) => Err(ServerError::TinderCryptError),
                     }
@@ -67,21 +71,21 @@ impl QueryNote {
             }
         } else {
             Ok(ResNote {
-                id: self.id,
-                title: self.title,
-                content: String::from_utf8(self.content).unwrap(),
+                id: self.id.to_owned(),
+                title: self.title.to_owned(),
+                content: String::from_utf8(self.content.to_owned()).unwrap(),
                 frontend_encryption: self.frontend_encryption,
                 backend_encryption: false,
                 created_at: self.created_at,
                 updated_at: self.updated_at,
-                expired_at: self.expired_at,
+                expires_at: self.expires_at,
             })
         }
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-pub struct IncomingNewNote {
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct IncomingNote {
     pub title: String,
     pub content: String,
     pub passphrase: Option<String>,
@@ -97,11 +101,11 @@ pub struct InsertableNote {
     pub frontend_encryption: bool,
     pub backend_encryption: bool,
     pub created_at: SystemTime,
-    pub expired_at: Option<SystemTime>,
+    pub expires_at: Option<SystemTime>,
     pub updated_at: SystemTime,
 }
 
-impl IncomingNewNote {
+impl IncomingNote {
     pub fn into_insertable(self) -> Result<InsertableNote, ServerError> {
         let time_now = SystemTime::now();
         let expiry_time = match self.lifetime_in_secs {
@@ -156,7 +160,7 @@ impl IncomingNewNote {
                 frontend_encryption: self.is_currently_encrypted,
                 created_at: time_now,
                 updated_at: time_now,
-                expired_at: expiry_time,
+                expires_at: expiry_time,
             })
         } else {
             Ok(InsertableNote {
@@ -166,7 +170,7 @@ impl IncomingNewNote {
                 frontend_encryption: self.is_currently_encrypted,
                 created_at: time_now,
                 updated_at: time_now,
-                expired_at: expiry_time,
+                expires_at: expiry_time,
             })
         }
     }

@@ -16,6 +16,7 @@ pub enum Fields {
     Content(CommonError),
     Passphrase(CommonError),
     LifetimeInSecs(CommonError),
+    LogicError(&'static str),
 }
 
 #[derive(Debug, Display)]
