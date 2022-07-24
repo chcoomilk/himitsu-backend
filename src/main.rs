@@ -1,5 +1,3 @@
-use std::sync::atomic::AtomicUsize;
-use std::sync::Arc;
 use std::time::SystemTime;
 
 use actix_cors::Cors;
@@ -12,11 +10,8 @@ use diesel::r2d2::ConnectionManager;
 #[macro_use]
 extern crate diesel;
 
-// use crate::diesel;
-
 mod errors;
 mod handlers;
-mod models;
 mod schema;
 
 #[actix_web::main]
@@ -38,13 +33,10 @@ async fn main() -> std::io::Result<()> {
         std::thread::sleep(std::time::Duration::from_secs(env.cleanup_interval));
     });
 
-    let app_state = Arc::new(AtomicUsize::new(0));
-
     HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(env.clone()))
             .app_data(web::Data::new(pool.clone()))
-            .app_data(web::Data::new(app_state.clone()))
             .route("/", web::get().to(handlers::index))
             .wrap(
                 Cors::default()
@@ -63,12 +55,11 @@ async fn main() -> std::io::Result<()> {
             .wrap(Logger::default())
             .service(
                 web::scope("/notes")
-                .service(handlers::note::post::new)
-                    // .route("", web::post().to(handlers::note::new))
-                    .route("", web::get().to(handlers::note::search_by_title))
-                    .route("/{id}", web::delete().to(handlers::note::del))
-                    .route("/{id}", web::get().to(handlers::note::get_info))
-                    .route("/{id}", web::post().to(handlers::note::decrypt)),
+                    .service(handlers::note::mutate::new)
+                    .service(handlers::note::query::info)
+                    .service(handlers::note::query::search_by_title)
+                    .service(handlers::note::query::decrypt_note)
+                    .service(handlers::note::mutate::del), // .route("/{id}", web::get().to(handlers::note::get_info))
             )
     })
     .bind(address)?
