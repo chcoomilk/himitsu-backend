@@ -7,7 +7,6 @@ CREATE TABLE notes (
   discoverable BOOLEAN NOT NULL,
   frontend_encryption BOOLEAN NOT NULL,
   backend_encryption BOOLEAN NOT NULL,
-  updated_at TIMESTAMP NOT NULL DEFAULT now(),
   created_at TIMESTAMP NOT NULL DEFAULT now(),
   expires_at TIMESTAMP
 );
