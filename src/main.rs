@@ -1,5 +1,3 @@
-use std::sync::atomic::AtomicUsize;
-use std::sync::Arc;
 use std::time::SystemTime;
 
 use actix_cors::Cors;
@@ -14,7 +12,6 @@ extern crate diesel;
 
 mod errors;
 mod handlers;
-mod models;
 mod schema;
 
 #[actix_web::main]
@@ -30,19 +27,16 @@ async fn main() -> std::io::Result<()> {
     let connection = pool.get().unwrap();
     std::thread::spawn(move || loop {
         use schema::notes::dsl::notes;
-        diesel::delete(notes.filter(schema::notes::expired_at.le(SystemTime::now())))
+        diesel::delete(notes.filter(schema::notes::expires_at.le(SystemTime::now())))
             .execute(&connection)
             .unwrap();
         std::thread::sleep(std::time::Duration::from_secs(env.cleanup_interval));
     });
 
-    let app_state = Arc::new(AtomicUsize::new(0));
-
     HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(env.clone()))
             .app_data(web::Data::new(pool.clone()))
-            .app_data(web::Data::new(app_state.clone()))
             .route("/", web::get().to(handlers::index))
             .wrap(
                 Cors::default()
@@ -61,11 +55,11 @@ async fn main() -> std::io::Result<()> {
             .wrap(Logger::default())
             .service(
                 web::scope("/notes")
-                    .route("", web::post().to(handlers::note::new))
-                    .route("", web::get().to(handlers::note::filter_get))
-                    .route("/{id}", web::delete().to(handlers::note::del))
-                    .route("/{id}", web::get().to(handlers::note::get_info))
-                    .route("/{id}", web::post().to(handlers::note::decrypt)),
+                    .service(handlers::note::mutate::new)
+                    .service(handlers::note::query::info)
+                    .service(handlers::note::query::search_by_title)
+                    .service(handlers::note::query::decrypt_note)
+                    .service(handlers::note::mutate::del), // .route("/{id}", web::get().to(handlers::note::get_info))
             )
     })
     .bind(address)?
