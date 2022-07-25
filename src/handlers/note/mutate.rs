@@ -1,15 +1,14 @@
-use actix_web::{post, web, HttpResponse};
+use actix_web::{delete, post, web, HttpRequest, HttpResponse};
 use diesel::prelude::*;
-use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use nanoid::nanoid;
 use serde_derive::{Deserialize, Serialize};
 use serde_json::json;
 use std::time::{Duration, SystemTime};
 use tindercrypt::cryptors::RingCryptor;
 
-use super::{Claims, JWTAuth, NoteInfo, Pool};
+use super::{Claims, JWTAuth, JWTAuthQuery, NoteInfo, Pool};
 
-use crate::{errors::ServerError, schema::notes::dsl::*, Envar};
+use crate::{errors::ServerError, schema::notes::dsl::*};
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct NewNote {
@@ -24,18 +23,14 @@ pub struct NewNote {
 
 #[post("")]
 pub async fn new(
+    req: HttpRequest,
     input: web::Json<NewNote>,
-    auth: web::Query<JWTAuth>,
+    auth: web::Query<JWTAuthQuery>,
     pool: web::Data<Pool>,
-    env: web::Data<Envar>,
 ) -> Result<HttpResponse, ServerError> {
     let unwraped_token: Option<jsonwebtoken::TokenData<Claims>>;
-    if let Some(token) = &auth.token {
-        match decode::<Claims>(
-            token,
-            &DecodingKey::from_secret(env.secret.as_ref()),
-            &Validation::new(Algorithm::HS256),
-        ) {
+    if let Some(token) = &auth.unwrap() {
+        match token.decode() {
             Ok(token) => unwraped_token = Some(token),
             Err(e) => match e.kind() {
                 jsonwebtoken::errors::ErrorKind::InvalidToken
@@ -117,22 +112,29 @@ pub async fn new(
     };
 
     let connection = pool.get()?;
-    let append_id_token = move |new_id: String| match unwraped_token {
+    let append_id_token = move |new_id: String, c: SystemTime| match unwraped_token {
         Some(mut jwt) => {
-            jwt.claims.ids.push(new_id);
-            encode(
-                &Header::default(),
-                &jwt.claims,
-                &EncodingKey::from_secret(env.secret.as_ref()),
-            )
-            .unwrap()
+            jwt.claims.ids.retain(|t| t.0 != new_id);
+            jwt.claims.ids.push((new_id, c));
+            JWTAuth::new(Claims {
+                ids: jwt.claims.ids,
+                iat: SystemTime::now(),
+                sub: req
+                    .connection_info()
+                    .peer_addr()
+                    .unwrap_or("unknown")
+                    .to_string(),
+            })
         }
-        None => encode(
-            &Header::default(),
-            &Claims { ids: vec![new_id] },
-            &EncodingKey::from_secret(env.secret.as_ref()),
-        )
-        .unwrap(),
+        None => JWTAuth::new(Claims {
+            ids: vec![(new_id, c)],
+            iat: SystemTime::now(),
+            sub: req
+                .connection_info()
+                .peer_addr()
+                .unwrap_or("unknown")
+                .to_string(),
+        }),
     };
 
     if let Some(custom_id) = &input.id {
@@ -144,7 +146,6 @@ pub async fn new(
                 &discoverable.eq(input.discoverable.unwrap_or(false)),
                 &frontend_encryption.eq(enc.0),
                 &backend_encryption.eq(enc.1),
-                &updated_at.eq(time_now),
                 &created_at.eq(time_now),
                 &expires_at.eq(expiry_time),
             ))
@@ -153,7 +154,6 @@ pub async fn new(
                 title,
                 backend_encryption,
                 frontend_encryption,
-                updated_at,
                 created_at,
                 expires_at,
             ))
@@ -162,7 +162,12 @@ pub async fn new(
         match res {
             Ok(result) => {
                 let response = result[0].to_owned();
-
+                let token = append_id_token(response.id.clone(), response.created_at);
+                if token.is_err() {
+                    diesel::delete(notes)
+                        .filter(id.eq(&response.id))
+                        .execute(&connection)?;
+                }
                 Ok(HttpResponse::Created().json(json!({
                     "id": response.id,
                     "title": response.title,
@@ -170,7 +175,7 @@ pub async fn new(
                     "frontend_encryption": response.frontend_encryption,
                     "expires_at": response.expires_at,
                     "created_at": response.created_at,
-                    "token": append_id_token(response.id)
+                    "token": token?
                 })))
             }
             Err(e) => match e {
@@ -193,7 +198,6 @@ pub async fn new(
                     &discoverable.eq(input.discoverable.unwrap_or(false)),
                     &frontend_encryption.eq(enc.0),
                     &backend_encryption.eq(enc.1),
-                    &updated_at.eq(time_now),
                     &created_at.eq(time_now),
                     &expires_at.eq(expiry_time),
                 ))
@@ -202,7 +206,6 @@ pub async fn new(
                     title,
                     backend_encryption,
                     frontend_encryption,
-                    updated_at,
                     created_at,
                     expires_at,
                 ))
@@ -211,6 +214,12 @@ pub async fn new(
             match res {
                 Ok(result) => {
                     let response = result[0].to_owned();
+                    let token = append_id_token(response.id.clone(), response.created_at);
+                    if token.is_err() {
+                        diesel::delete(notes)
+                            .filter(id.eq(&response.id))
+                            .execute(&connection)?;
+                    }
                     break Ok(HttpResponse::Created().json(json!({
                         "id": response.id,
                         "title": response.title,
@@ -218,7 +227,7 @@ pub async fn new(
                         "frontend_encryption": response.frontend_encryption,
                         "expires_at": response.expires_at,
                         "created_at": response.created_at,
-                        "token": append_id_token(response.id)
+                        "token": token?
                     })));
                 }
                 Err(e) => match e {
@@ -237,51 +246,54 @@ pub async fn new(
     }
 }
 
-#[post("/{note_id}")]
+#[delete("/{note_id}")]
 pub async fn del(
     note_id: web::Path<String>,
     auth: web::Query<JWTAuth>,
     pool: web::Data<Pool>,
-    env: web::Data<Envar>,
     // _req: web::HttpRequest,
 ) -> Result<HttpResponse, ServerError> {
-    if let Some(token) = &auth.token {
-        let jwt = decode::<Claims>(
-            &token,
-            &DecodingKey::from_secret(env.secret.as_ref()),
-            &Validation::new(Algorithm::HS256),
-        )?;
+    let mut jwt = auth.decode()?;
 
-        if !jwt.claims.ids.contains(&note_id) {
-            return Ok(HttpResponse::Unauthorized().finish());
+    let res = jwt
+        .claims
+        .ids
+        .iter()
+        .enumerate()
+        .find(|&t| t.1 .0.eq(&note_id.to_owned()));
+    if let Some(res) = res {
+        let connection = pool.get()?;
+
+        match notes
+            .select((
+                id,
+                title,
+                backend_encryption,
+                frontend_encryption,
+                created_at,
+                expires_at,
+            ))
+            .find(note_id.to_owned())
+            .first::<NoteInfo>(&connection)
+        {
+            Ok(note) => {
+                if note.created_at == res.1 .1 {
+                    diesel::delete(notes.filter(id.eq(&note.id))).execute(&connection)?;
+                    jwt.claims.ids.remove(res.0);
+                    Ok(HttpResponse::Ok().json(json!({
+                        "id": note.id,
+                        "token": JWTAuth::new(jwt.claims)?,
+                    })))
+                } else {
+                    Ok(HttpResponse::Forbidden().finish())
+                }
+            }
+            Err(err) => match err {
+                diesel::result::Error::NotFound => Ok(HttpResponse::NotFound().finish()),
+                _ => Err(ServerError::DieselError),
+            },
         }
     } else {
-        return Ok(HttpResponse::Unauthorized().finish());
-    }
-    let connection = pool.get()?;
-
-    match notes
-        .select((
-            id,
-            title,
-            backend_encryption,
-            frontend_encryption,
-            updated_at,
-            created_at,
-            expires_at,
-        ))
-        .find(note_id.to_owned())
-        .first::<NoteInfo>(&connection)
-    {
-        Ok(note) => {
-            diesel::delete(notes.filter(id.eq(&note.id))).execute(&connection)?;
-            Ok(HttpResponse::Ok().json(json!({
-                "id": note.id,
-            })))
-        }
-        Err(err) => match err {
-            diesel::result::Error::NotFound => Ok(HttpResponse::NotFound().finish()),
-            _ => Err(ServerError::DieselError),
-        },
+        return Ok(HttpResponse::Forbidden().finish());
     }
 }

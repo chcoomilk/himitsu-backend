@@ -1,16 +1,61 @@
 use serde_derive::{Deserialize, Serialize};
-use std::time::SystemTime;
+use std::{collections::HashSet, time::SystemTime};
 
 use super::Pool;
 
+use jsonwebtoken::{
+    self, decode, encode, Algorithm, DecodingKey, EncodingKey, Header, TokenData, Validation,
+};
+
 #[derive(Debug, Serialize, Deserialize)]
-struct Claims {
-    ids: Vec<String>,
+pub struct Claims {
+    ids: Vec<(String, SystemTime)>,
+    iat: SystemTime,
+    sub: String,
 }
 
-#[derive(Clone, Debug, Queryable, Serialize, Deserialize)]
-pub struct JWTAuth {
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct JWTAuthQuery {
     token: Option<String>,
+}
+
+impl JWTAuthQuery {
+    fn unwrap(&self) -> Option<JWTAuth> {
+        if let Some(token) = self.token.to_owned() {
+            Some(JWTAuth { token })
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct JWTAuth {
+    token: String,
+}
+
+impl JWTAuth {
+    pub fn new(claims: Claims) -> Result<String, jsonwebtoken::errors::Error> {
+        let header = Header::new(Algorithm::HS512);
+        let secret = std::env::var("SECRET_KEY").unwrap();
+        encode(
+            &header,
+            &claims,
+            &EncodingKey::from_secret(secret.as_ref()),
+        )
+    }
+
+    pub fn decode(&self) -> Result<TokenData<Claims>, jsonwebtoken::errors::Error> {
+        let secret = std::env::var("SECRET_KEY").unwrap();
+        let mut validation = Validation::new(Algorithm::HS512);
+        validation.required_spec_claims = HashSet::new();
+        validation.validate_exp = false;
+        decode::<Claims>(
+            &self.token,
+            &DecodingKey::from_secret(secret.as_ref()),
+            &validation,
+        )
+    }
 }
 
 #[derive(Clone, Debug, Queryable, Serialize, PartialEq)]
@@ -19,7 +64,6 @@ struct NoteInfo {
     title: String,
     backend_encryption: bool,
     frontend_encryption: bool,
-    updated_at: SystemTime,
     created_at: SystemTime,
     expires_at: Option<SystemTime>,
 }

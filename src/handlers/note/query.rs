@@ -17,7 +17,6 @@ pub struct QueryNote {
     pub discoverable: bool,
     pub frontend_encryption: bool,
     pub backend_encryption: bool,
-    pub updated_at: SystemTime,
     pub created_at: SystemTime,
     pub expires_at: Option<SystemTime>,
 }
@@ -35,7 +34,6 @@ pub async fn info(
             title,
             backend_encryption,
             frontend_encryption,
-            updated_at,
             created_at,
             expires_at,
         ))
@@ -83,35 +81,47 @@ pub async fn decrypt_note(
                 }
             }
 
-            if let Some(passphrase) = &input.passphrase {
-                let cryptor = RingCryptor::new();
-                let res = cryptor.open(passphrase.as_bytes(), &note.content);
-                match res {
-                    Ok(content_in_bytes) => match String::from_utf8(content_in_bytes) {
-                        Ok(note_content) => Ok(HttpResponse::Ok().json(json!({
-                            "id": note.id,
-                            "title": note.title,
-                            "backend_encryption": note.backend_encryption,
-                            "frontend_encryption": note.frontend_encryption,
-                            "content": note_content,
-                            "created_at": note.created_at,
-                            "expires_at": note.expires_at,
-                            "updated_at": note.updated_at,
-                        }))),
-                        Err(_) => Err(ServerError::TinderCryptError),
-                    },
-                    Err(err) => match err {
-                        tindercrypt::errors::Error::PassphraseTooSmall => {
-                            Ok(HttpResponse::Unauthorized().body("wrong passphrase"))
-                        }
-                        tindercrypt::errors::Error::DecryptionError => {
-                            Ok(HttpResponse::Unauthorized().body("wrong passphrase"))
-                        }
-                        _ => Err(ServerError::TinderCryptError),
-                    },
+            if note.backend_encryption {
+                if let Some(passphrase) = &input.passphrase {
+                    let cryptor = RingCryptor::new();
+                    let res = cryptor.open(passphrase.as_bytes(), &note.content);
+                    match res {
+                        Ok(content_in_bytes) => match String::from_utf8(content_in_bytes) {
+                            Ok(note_content) => Ok(HttpResponse::Ok().json(json!({
+                                "id": note.id,
+                                "title": note.title,
+                                "backend_encryption": note.backend_encryption,
+                                "frontend_encryption": note.frontend_encryption,
+                                "content": note_content,
+                                "created_at": note.created_at,
+                                "expires_at": note.expires_at,
+                            }))),
+                            Err(_) => Err(ServerError::TinderCryptError),
+                        },
+                        Err(err) => match err {
+                            tindercrypt::errors::Error::PassphraseTooSmall => {
+                                Ok(HttpResponse::Unauthorized().body("wrong passphrase"))
+                            }
+                            tindercrypt::errors::Error::DecryptionError => {
+                                Ok(HttpResponse::Unauthorized().body("wrong passphrase"))
+                            }
+                            _ => Err(ServerError::TinderCryptError),
+                        },
+                    }
+                } else {
+                    Ok(HttpResponse::Unauthorized().body("wrong passphrase"))
                 }
             } else {
-                Ok(HttpResponse::Unauthorized().body("wrong passphrase"))
+                let note_content = String::from_utf8(note.content)?;
+                Ok(HttpResponse::Ok().json(json!({
+                    "id": note.id,
+                    "title": note.title,
+                    "backend_encryption": note.backend_encryption,
+                    "frontend_encryption": note.frontend_encryption,
+                    "content": note_content,
+                    "created_at": note.created_at,
+                    "expires_at": note.expires_at,
+                })))
             }
         }
         Err(err) => match err {
@@ -143,7 +153,6 @@ pub async fn search_by_title(
             title,
             backend_encryption,
             frontend_encryption,
-            updated_at,
             created_at,
             expires_at,
         ))

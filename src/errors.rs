@@ -8,6 +8,7 @@ pub enum ServerError {
     R2D2Error,
     TinderCryptError,
     JWTError,
+    Default,
 }
 
 impl From<r2d2::Error> for ServerError {
@@ -35,8 +36,16 @@ impl From<tindercrypt::errors::Error> for ServerError {
 }
 
 impl From<jsonwebtoken::errors::Error> for ServerError {
-    fn from(_: jsonwebtoken::errors::Error) -> Self {
+    fn from(e: jsonwebtoken::errors::Error) -> Self {
+        println!("{e:?}");
         ServerError::JWTError
+    }
+}
+
+impl From<std::string::FromUtf8Error> for ServerError {
+    fn from(e: std::string::FromUtf8Error) -> Self {
+        println!("{e:?}");
+        ServerError::Default
     }
 }
 
@@ -56,6 +65,7 @@ impl actix_web::error::ResponseError for ServerError {
             ServerError::JWTError => {
                 HttpResponse::InternalServerError().body("Library Error: JWT Library Malfunctioned")
             }
+            ServerError::Default => HttpResponse::InternalServerError().finish(),
         }
     }
 }
