@@ -59,7 +59,7 @@ async fn main() -> std::io::Result<()> {
                     .service(handlers::note::query::info)
                     .service(handlers::note::query::search_by_title)
                     .service(handlers::note::query::decrypt_note)
-                    .service(handlers::note::mutate::del), // .route("/{id}", web::get().to(handlers::note::get_info))
+                    .service(handlers::note::mutate::del),
             )
     })
     .bind(address)?
