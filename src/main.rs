@@ -61,6 +61,11 @@ async fn main() -> std::io::Result<()> {
                     .service(handlers::note::query::decrypt_note)
                     .service(handlers::note::mutate::del),
             )
+            .service(
+                web::scope("/token")
+                    .service(handlers::token::verify)
+                    .service(handlers::token::combine),
+            )
     })
     .bind(address)?
     .run()
