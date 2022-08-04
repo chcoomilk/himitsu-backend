@@ -9,6 +9,8 @@ pub enum ServerError {
     TinderCryptError,
     JWTError,
     Default,
+    GeneralNoAccess,
+    BlameUpdate,
 }
 
 impl From<r2d2::Error> for ServerError {
@@ -38,7 +40,16 @@ impl From<tindercrypt::errors::Error> for ServerError {
 impl From<jsonwebtoken::errors::Error> for ServerError {
     fn from(e: jsonwebtoken::errors::Error) -> Self {
         println!("{e:?}");
-        ServerError::JWTError
+        match e.kind() {
+            jsonwebtoken::errors::ErrorKind::InvalidToken
+            | jsonwebtoken::errors::ErrorKind::InvalidSignature
+            | jsonwebtoken::errors::ErrorKind::InvalidSubject => ServerError::GeneralNoAccess,
+            jsonwebtoken::errors::ErrorKind::MissingRequiredClaim(e) => {
+                println!("Missing --> {e:?}");
+                ServerError::BlameUpdate
+            }
+            _ => ServerError::JWTError,
+        }
     }
 }
 
@@ -65,7 +76,11 @@ impl actix_web::error::ResponseError for ServerError {
             ServerError::JWTError => {
                 HttpResponse::InternalServerError().body("Library Error: JWT Library Malfunctioned")
             }
+            ServerError::GeneralNoAccess => HttpResponse::Forbidden().body("Invalid token"),
             ServerError::Default => HttpResponse::InternalServerError().finish(),
+            ServerError::BlameUpdate => HttpResponse::UnprocessableEntity().body(
+                "Irregular form of data: Possibly because of difference in app version and it's no longer supported",
+            ),
         }
     }
 }

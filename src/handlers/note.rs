@@ -9,9 +9,9 @@ use jsonwebtoken::{
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
-    ids: Vec<(String, SystemTime)>,
-    iat: SystemTime,
-    sub: String,
+    pub ids: Vec<(String, SystemTime)>,
+    pub iat: SystemTime,
+    pub sub: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -38,11 +38,7 @@ impl JWTAuth {
     pub fn new(claims: Claims) -> Result<String, jsonwebtoken::errors::Error> {
         let header = Header::new(Algorithm::HS512);
         let secret = std::env::var("SECRET_KEY").unwrap();
-        encode(
-            &header,
-            &claims,
-            &EncodingKey::from_secret(secret.as_ref()),
-        )
+        encode(&header, &claims, &EncodingKey::from_secret(secret.as_ref()))
     }
 
     pub fn decode(&self) -> Result<TokenData<Claims>, jsonwebtoken::errors::Error> {
