@@ -13,7 +13,7 @@ use crate::{errors::ServerError, schema::notes::dsl::*};
 #[derive(Clone, Deserialize, Serialize)]
 pub struct NewNote {
     id: Option<String>,
-    title: String,
+    title: Option<String>,
     content: String,
     discoverable: Option<bool>,
     passphrase: Option<String>,
@@ -75,6 +75,16 @@ pub async fn new(
         }
         None => None,
     };
+
+    if let Some(t) = &input.title {
+        if t.trim().is_empty() {
+            return Ok(HttpResponse::BadRequest().body("title is empty"));
+        } else {
+            if t.len() <= 3 {
+                return Ok(HttpResponse::BadRequest().body("title is too short"));
+            }
+        }
+    }
 
     let enc = (
         input.is_currently_encrypted.unwrap_or(false),

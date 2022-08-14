@@ -12,7 +12,7 @@ use crate::{errors::ServerError, schema::notes::dsl::*};
 #[derive(Clone, Debug, Queryable)]
 pub struct QueryNote {
     pub id: String,
-    pub title: String,
+    pub title: Option<String>,
     pub content: Vec<u8>,
     pub discoverable: bool,
     pub frontend_encryption: bool,
@@ -158,9 +158,9 @@ pub async fn search_by_title(
         ))
         .offset(input.0.offset.unwrap_or(0))
         .limit(input.0.limit.unwrap_or(5))
-        .order(id)
+        .order(created_at.asc())
         .filter(
-            title.ilike(&input.title).and(
+            title.like(&input.title).and(
                 backend_encryption
                     .eq(false)
                     .and(frontend_encryption.eq(false))
