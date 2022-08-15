@@ -57,7 +57,7 @@ impl JWTAuth {
 #[derive(Clone, Debug, Queryable, Serialize, PartialEq)]
 struct NoteInfo {
     id: String,
-    title: String,
+    title: Option<String>,
     backend_encryption: bool,
     frontend_encryption: bool,
     created_at: SystemTime,

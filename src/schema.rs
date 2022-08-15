@@ -1,7 +1,7 @@
 table! {
     notes (id) {
         id -> Varchar,
-        title -> Varchar,
+        title -> Nullable<Varchar>,
         content -> Bytea,
         discoverable -> Bool,
         frontend_encryption -> Bool,
