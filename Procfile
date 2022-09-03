@@ -1,2 +1,2 @@
-web: ./target/release/himitsu
-release: ./target/release/diesel migration run
+web: web: /workspaces/bin/rust-actix-diesel-connect/himitsu
+release: web: /workspaces/bin/rust-actix-diesel-connect/diesel migration run
