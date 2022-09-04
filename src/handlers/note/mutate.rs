@@ -121,7 +121,7 @@ pub async fn new(
         input.content.clone().into_bytes()
     };
 
-    let connection = pool.get()?;
+    let mut connection = pool.get()?;
     let append_id_token = move |new_id: String, c: SystemTime| match unwraped_token {
         Some(mut jwt) => {
             jwt.claims.ids.retain(|t| t.0 != new_id);
@@ -168,7 +168,7 @@ pub async fn new(
                     created_at,
                     expires_at,
                 ))
-                .get_results::<NoteInfo>(&connection);
+                .get_results::<NoteInfo>(&mut connection);
 
             match res {
                 Ok(result) => {
@@ -177,7 +177,7 @@ pub async fn new(
                     if token.is_err() {
                         diesel::delete(notes)
                             .filter(id.eq(&response.id))
-                            .execute(&connection)?;
+                            .execute(&mut connection)?;
                     }
                     return Ok(HttpResponse::Created().json(json!({
                         "id": response.id,
@@ -226,7 +226,7 @@ pub async fn new(
                 created_at,
                 expires_at,
             ))
-            .get_results::<NoteInfo>(&connection);
+            .get_results::<NoteInfo>(&mut connection);
 
         match res {
             Ok(result) => {
@@ -235,7 +235,7 @@ pub async fn new(
                 if token.is_err() {
                     diesel::delete(notes)
                         .filter(id.eq(&response.id))
-                        .execute(&connection)?;
+                        .execute(&mut connection)?;
                 }
                 break Ok(HttpResponse::Created().json(json!({
                     "id": response.id,
@@ -278,7 +278,7 @@ pub async fn del(
         .enumerate()
         .find(|&t| t.1 .0.eq(&note_id.to_owned()));
     if let Some(res) = res {
-        let connection = pool.get()?;
+        let mut connection = pool.get()?;
 
         match notes
             .select((
@@ -290,11 +290,11 @@ pub async fn del(
                 expires_at,
             ))
             .find(note_id.to_owned())
-            .first::<NoteInfo>(&connection)
+            .first::<NoteInfo>(&mut connection)
         {
             Ok(note) => {
                 if note.created_at == res.1 .1 {
-                    diesel::delete(notes.filter(id.eq(&note.id))).execute(&connection)?;
+                    diesel::delete(notes.filter(id.eq(&note.id))).execute(&mut connection)?;
                     jwt.claims.ids.remove(res.0);
                     Ok(HttpResponse::Ok().json(json!({
                         "id": note.id,

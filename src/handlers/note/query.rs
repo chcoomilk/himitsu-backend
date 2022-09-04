@@ -26,7 +26,7 @@ pub async fn info(
     note_id: web::Path<String>,
     pool: web::Data<Pool>,
 ) -> Result<HttpResponse, ServerError> {
-    let connection = pool.get()?;
+    let mut connection = pool.get()?;
 
     match notes
         .select((
@@ -38,12 +38,12 @@ pub async fn info(
             expires_at,
         ))
         .find(note_id.to_owned())
-        .get_result::<NoteInfo>(&connection)
+        .get_result::<NoteInfo>(&mut connection)
     {
         Ok(note) => {
             if let Some(time) = note.expires_at {
                 if time <= SystemTime::now() {
-                    diesel::delete(notes.filter(id.eq(note_id.to_owned()))).execute(&connection)?;
+                    diesel::delete(notes.filter(id.eq(note_id.to_owned()))).execute(&mut connection)?;
                     return Ok(HttpResponse::NotFound()
                         .body(format!("note id: {} was not found", note_id)));
                 }
@@ -66,16 +66,16 @@ pub async fn decrypt_note(
     input: web::Json<PassphraseField>,
     pool: web::Data<Pool>,
 ) -> Result<HttpResponse, ServerError> {
-    let connection = pool.get()?;
+    let mut connection = pool.get()?;
 
     match notes
         .find(note_id.to_owned())
-        .get_result::<QueryNote>(&connection)
+        .get_result::<QueryNote>(&mut connection)
     {
         Ok(note) => {
             if let Some(time) = note.expires_at {
                 if time <= SystemTime::now() {
-                    diesel::delete(notes.filter(id.eq(note_id.to_owned()))).execute(&connection)?;
+                    diesel::delete(notes.filter(id.eq(note_id.to_owned()))).execute(&mut connection)?;
                     return Ok(HttpResponse::NotFound()
                         .body(format!("note id: {} was not found", note_id)));
                 }
@@ -145,7 +145,7 @@ pub async fn search_by_title(
     input: web::Query<FilterParameterQuery>,
     pool: web::Data<Pool>,
 ) -> Result<HttpResponse, ServerError> {
-    let connection = pool.get()?;
+    let mut connection = pool.get()?;
 
     match notes
         .select((
@@ -167,7 +167,7 @@ pub async fn search_by_title(
                     .and(discoverable.eq(true)),
             ),
         )
-        .get_results::<NoteInfo>(&connection)
+        .get_results::<NoteInfo>(&mut connection)
     {
         Ok(notes_vec) => Ok(HttpResponse::Ok().json(json!(notes_vec))),
         Err(_) => Ok(HttpResponse::NotFound().finish()),
