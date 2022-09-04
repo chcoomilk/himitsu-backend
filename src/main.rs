@@ -24,11 +24,11 @@ async fn main() -> std::io::Result<()> {
         ))
         .expect("Failed to create a pool");
 
-    let connection = pool.get().unwrap();
+    let mut connection = pool.get().unwrap();
     std::thread::spawn(move || loop {
         use schema::notes::dsl::notes;
         diesel::delete(notes.filter(schema::notes::expires_at.le(SystemTime::now())))
-            .execute(&connection)
+            .execute(& mut connection)
             .unwrap();
         std::thread::sleep(std::time::Duration::from_secs(env.cleanup_interval));
     });
