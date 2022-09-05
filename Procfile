@@ -1,2 +1,1 @@
-diesel migration run
-web: /workspace/bin/himitsu
+web: diesel migration run && /workspace/bin/himitsu
