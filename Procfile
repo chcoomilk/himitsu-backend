@@ -1,2 +1,2 @@
-/workspace/bin/diesel_cli migration run
+diesel migration run
 web: /workspace/bin/himitsu
