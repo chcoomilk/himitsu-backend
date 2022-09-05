@@ -6,6 +6,7 @@ use actix_web::{middleware::Logger, web, App, HttpServer};
 use diesel::pg::PgConnection;
 use diesel::prelude::*;
 use diesel::r2d2::ConnectionManager;
+use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
 
 #[macro_use]
 extern crate diesel;
@@ -13,6 +14,8 @@ extern crate diesel;
 mod errors;
 mod handlers;
 mod schema;
+
+const MIGRATION: EmbeddedMigrations = embed_migrations!();
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -25,10 +28,12 @@ async fn main() -> std::io::Result<()> {
         .expect("Failed to create a pool");
 
     let mut connection = pool.get().unwrap();
+    MigrationHarness::run_pending_migrations(&mut pool.get().unwrap(), MIGRATION)
+        .expect("migration run failed, please check your database configuration!");
     std::thread::spawn(move || loop {
         use schema::notes::dsl::notes;
         diesel::delete(notes.filter(schema::notes::expires_at.le(SystemTime::now())))
-            .execute(& mut connection)
+            .execute(&mut connection)
             .unwrap();
         std::thread::sleep(std::time::Duration::from_secs(env.cleanup_interval));
     });
