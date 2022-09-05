@@ -1,1 +1,1 @@
-web: /workspace/bin/diesel && /workspace/bin/himitsu
+web: /workspace/bin/himitsu
