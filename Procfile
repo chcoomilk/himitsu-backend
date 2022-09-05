@@ -1,1 +1,1 @@
-web: /workspaces/bin/himitsu-backend
+web: /workspaces/bin/himitsu
