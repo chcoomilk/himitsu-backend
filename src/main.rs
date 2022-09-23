@@ -60,6 +60,8 @@ async fn main() -> std::io::Result<()> {
                     .unwrap(),
             ))
             .wrap(Logger::default())
+            // paths should be defined per handlers
+            // https://actix.rs/actix-web/actix_web/struct.App.html#method.configure
             .service(
                 web::scope("/notes")
                     .service(handlers::note::mutate::new)
