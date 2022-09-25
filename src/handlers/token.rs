@@ -1,11 +1,14 @@
 use std::time::SystemTime;
 
-use super::note::Claims;
-use crate::{errors::ServerError, Envar};
-use actix_web::{post, put, web, HttpRequest, HttpResponse};
-use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use super::{note::Claims, Pool};
+use crate::{errors::ServerError, AppState};
+use actix_web::{post, put, web, HttpRequest, HttpResponse, patch};
+use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey};
 use serde::Deserialize;
 use serde_json::json;
+
+use crate::schema::notes::dsl::*;
+use diesel::prelude::*;
 
 #[derive(Clone, Deserialize)]
 pub struct TokenReq {
@@ -18,11 +21,9 @@ struct Empty {}
 #[post("")]
 pub async fn verify(
     body: web::Json<TokenReq>,
-    env: web::Data<Envar>,
+    env: web::Data<AppState>,
 ) -> Result<HttpResponse, ServerError> {
-    let mut validation = Validation::new(Algorithm::HS512);
-    validation.required_spec_claims = std::collections::HashSet::new();
-    validation.validate_exp = false;
+    let validation = &env.jwt_validator;
     match decode::<Empty>(
         &body.token,
         &DecodingKey::from_secret(env.secret.as_ref()),
@@ -43,13 +44,11 @@ pub struct TokensReq {
 pub async fn combine(
     req: HttpRequest,
     body: web::Json<TokensReq>,
-    env: web::Data<Envar>,
+    env: web::Data<AppState>,
 ) -> Result<HttpResponse, ServerError> {
-    let mut validation = Validation::new(Algorithm::HS512);
-    validation.required_spec_claims = std::collections::HashSet::new();
-    validation.validate_exp = false;
+    let validation = &env.jwt_validator;
+    let header = &env.jwt_header;
     let secret = env.secret.as_ref();
-    let header = Header::new(Algorithm::HS512);
     let original_token = decode::<Claims>(
         &body.first_token,
         &DecodingKey::from_secret(&secret),
@@ -91,5 +90,63 @@ pub async fn combine(
         },
         &EncodingKey::from_secret(secret.as_ref()),
     )?;
+    Ok(HttpResponse::Ok().json(json!({ "token": token })))
+}
+
+#[patch("")]
+// this endpoint serves as clearing out ids that have been deleted
+pub async fn refresh_token(
+    req: HttpRequest,
+    body: web::Json<TokenReq>,
+    env: web::Data<AppState>,
+    pool: web::Data<Pool>,
+) -> Result<HttpResponse, ServerError> {
+    let mut connection = pool.get()?;
+    let validation = &env.jwt_validator;
+    let header = &env.jwt_header;
+    let secret: &[u8] = env.secret.as_ref();
+    let token = decode::<Claims>(&body.token, &DecodingKey::from_secret(&secret), &validation)?;
+
+    let mut result: Vec<(String, SystemTime)> = Vec::new();
+    for _id in token.claims.ids.iter() {
+        let should_push: bool = match notes
+            .find(_id.0.to_owned())
+            .select(created_at)
+            .first::<SystemTime>(&mut connection)
+        {
+            Ok(creation_time) => {
+                if creation_time == _id.1 {
+                    true
+                } else {
+                    false
+                }
+            }
+            Err(e) => match e {
+                diesel::result::Error::NotFound => false,
+                _ => {
+                    return Err(ServerError::DieselError);
+                }
+            },
+        };
+
+        if should_push {
+            result.push((_id.0.to_owned(), _id.1));
+        }
+    }
+
+    let token = encode(
+        &header,
+        &Claims {
+            iat: SystemTime::now(),
+            ids: result,
+            sub: req
+                .connection_info()
+                .peer_addr()
+                .unwrap_or("unknown")
+                .to_owned(),
+        },
+        &EncodingKey::from_secret(secret.as_ref()),
+    )?;
+
     Ok(HttpResponse::Ok().json(json!({ "token": token })))
 }

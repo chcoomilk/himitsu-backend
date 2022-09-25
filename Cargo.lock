@@ -782,6 +782,7 @@ dependencies = [
  "dotenv",
  "env_logger",
  "jsonwebtoken",
+ "log",
  "nanoid",
  "r2d2",
  "rand",
