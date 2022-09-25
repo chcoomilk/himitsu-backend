@@ -7,6 +7,7 @@ use diesel::pg::PgConnection;
 use diesel::prelude::*;
 use diesel::r2d2::ConnectionManager;
 use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
+use jsonwebtoken::{Algorithm, Header, Validation};
 
 #[macro_use]
 extern crate diesel;
@@ -19,7 +20,7 @@ const MIGRATION: EmbeddedMigrations = embed_migrations!();
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    let env = Envar::init();
+    let env = AppState::init();
     let address = env.app_address.to_owned();
     let pool = r2d2::Pool::builder()
         .build(ConnectionManager::<PgConnection>::new(
@@ -32,6 +33,7 @@ async fn main() -> std::io::Result<()> {
         .expect("migration run failed, please check your database configuration!");
     std::thread::spawn(move || loop {
         use schema::notes::dsl::notes;
+        log::info!("Clearing expired notes from database!");
         diesel::delete(notes.filter(schema::notes::expires_at.le(SystemTime::now())))
             .execute(&mut connection)
             .unwrap();
@@ -58,6 +60,8 @@ async fn main() -> std::io::Result<()> {
                     .unwrap(),
             ))
             .wrap(Logger::default())
+            // paths should be defined per handlers
+            // https://actix.rs/actix-web/actix_web/struct.App.html#method.configure
             .service(
                 web::scope("/notes")
                     .service(handlers::note::mutate::new)
@@ -69,7 +73,8 @@ async fn main() -> std::io::Result<()> {
             .service(
                 web::scope("/token")
                     .service(handlers::token::verify)
-                    .service(handlers::token::combine),
+                    .service(handlers::token::combine)
+                    .service(handlers::token::refresh_token),
             )
     })
     .bind(address)?
@@ -78,23 +83,31 @@ async fn main() -> std::io::Result<()> {
 }
 
 #[derive(Clone)]
-pub struct Envar {
+pub struct AppState {
     pub secret: String,
+    pub jwt_validator: Validation,
+    pub jwt_header: Header,
     db_url: String,
     app_address: String,
     cleanup_interval: u64,
 }
 
-impl Envar {
+impl AppState {
     fn init() -> Self {
         dotenv::dotenv().ok();
         env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
+
+        let mut validation = Validation::new(Algorithm::HS512);
+        validation.required_spec_claims = std::collections::HashSet::new();
+        validation.validate_exp = false;
 
         Self {
             cleanup_interval: std::env::var("CLEANUP_INTERVAL")
                 .unwrap_or("2700".to_string())
                 .parse::<u64>()
                 .expect("must be an unsigned 64-bit number"),
+            jwt_validator: validation,
+            jwt_header: Header::new(Algorithm::HS512),
             secret: std::env::var("SECRET_KEY").expect("SECRET_KEY in .env"),
             db_url: std::env::var("DATABASE_URL").expect("DATABASE_URL in .env"),
             app_address: format!(
