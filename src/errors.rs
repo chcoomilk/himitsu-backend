@@ -77,6 +77,7 @@ impl actix_web::error::ResponseError for ServerError {
                 HttpResponse::InternalServerError().body("Library Error: JWT Library Malfunctioned")
             }
             ServerError::GeneralNoAccess => HttpResponse::Forbidden().body("Invalid token"),
+            // leave this messageless
             ServerError::Default => HttpResponse::InternalServerError().finish(),
             ServerError::BlameUpdate => HttpResponse::UnprocessableEntity().body(
                 "Irregular form of data: Possibly because of difference in app version and it's no longer supported",

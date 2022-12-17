@@ -1,4 +1,4 @@
-use actix_web::{delete, post, web, HttpRequest, HttpResponse};
+use actix_web::{web, HttpRequest, HttpResponse};
 use diesel::prelude::*;
 use nanoid::nanoid;
 use serde_derive::{Deserialize, Serialize};
@@ -19,9 +19,10 @@ pub struct NewNote {
     passphrase: Option<String>,
     is_currently_encrypted: Option<bool>,
     lifetime_in_secs: Option<u64>,
+    delete_after_read: Option<i32>,
+    allow_delete_with_passphrase: Option<bool>,
 }
 
-#[post("")]
 pub async fn new(
     req: HttpRequest,
     input: web::Json<NewNote>,
@@ -39,7 +40,7 @@ pub async fn new(
                 }
                 jsonwebtoken::errors::ErrorKind::ExpiredSignature => unwraped_token = None,
                 _ => {
-                    println!("{}", e);
+                    log::error!("{e}");
                     return Err(ServerError::JWTError);
                 }
             },
@@ -147,28 +148,35 @@ pub async fn new(
         }),
     };
 
+    let mut insert_note = |_id: String| {
+        diesel::insert_into(notes)
+            .values((
+                &id.eq(_id),
+                &title.eq(input.title.to_owned()),
+                &content.eq(&content_bits),
+                &discoverable.eq(input.discoverable.unwrap_or(false)),
+                &frontend_encryption.eq(enc.0),
+                &backend_encryption.eq(enc.1),
+                &created_at.eq(time_now),
+                &expires_at.eq(expiry_time),
+                &delete_after_read.eq(input.delete_after_read),
+                &allow_delete_with_passphrase
+                    .eq(input.allow_delete_with_passphrase.unwrap_or(false)),
+            ))
+            .returning((
+                id,
+                title,
+                backend_encryption,
+                frontend_encryption,
+                created_at,
+                expires_at,
+            ))
+            .get_results::<NoteInfo>(&mut connection)
+    };
+
     if let Some(custom_id) = &input.id {
         if !custom_id.trim().is_empty() {
-            let res = diesel::insert_into(notes)
-                .values((
-                    &id.eq(custom_id),
-                    &title.eq(input.title.to_owned()),
-                    &content.eq(content_bits),
-                    &discoverable.eq(input.discoverable.unwrap_or(false)),
-                    &frontend_encryption.eq(enc.0),
-                    &backend_encryption.eq(enc.1),
-                    &created_at.eq(time_now),
-                    &expires_at.eq(expiry_time),
-                ))
-                .returning((
-                    id,
-                    title,
-                    backend_encryption,
-                    frontend_encryption,
-                    created_at,
-                    expires_at,
-                ))
-                .get_results::<NoteInfo>(&mut connection);
+            let res = insert_note(custom_id.to_owned());
 
             match res {
                 Ok(result) => {
@@ -206,27 +214,10 @@ pub async fn new(
         }
     }
 
+    // good idea to check if this ever goes on forever because 6-long id is exhausted
+    // but nah
     let result: Result<HttpResponse, ServerError> = loop {
-        let res = diesel::insert_into(notes)
-            .values((
-                &id.eq(nanoid!(6)),
-                &title.eq(input.title.to_owned()),
-                &content.eq(&content_bits),
-                &discoverable.eq(input.discoverable.unwrap_or(false)),
-                &frontend_encryption.eq(enc.0),
-                &backend_encryption.eq(enc.1),
-                &created_at.eq(time_now),
-                &expires_at.eq(expiry_time),
-            ))
-            .returning((
-                id,
-                title,
-                backend_encryption,
-                frontend_encryption,
-                created_at,
-                expires_at,
-            ))
-            .get_results::<NoteInfo>(&mut connection);
+        let res = insert_note(nanoid!(6));
 
         match res {
             Ok(result) => {
@@ -262,14 +253,20 @@ pub async fn new(
     result
 }
 
-#[delete("/{note_id}")]
+#[derive(Deserialize)]
+pub struct DeleteUrlQuery {
+    jwt: JWTAuth,
+    passphrase: Option<String>,
+}
+
 pub async fn del(
     note_id: web::Path<String>,
-    auth: web::Query<JWTAuth>,
+    auth: web::Query<DeleteUrlQuery>,
     pool: web::Data<Pool>,
     // _req: web::HttpRequest,
 ) -> Result<HttpResponse, ServerError> {
-    let mut jwt = auth.decode()?;
+    let mut connection = pool.get()?;
+    let mut jwt = auth.jwt.decode()?;
 
     let res = jwt
         .claims
@@ -277,9 +274,8 @@ pub async fn del(
         .iter()
         .enumerate()
         .find(|&t| t.1 .0.eq(&note_id.to_owned()));
-    if let Some(res) = res {
-        let mut connection = pool.get()?;
 
+    if let Some(res) = res {
         match notes
             .select((
                 id,
@@ -310,6 +306,24 @@ pub async fn del(
             },
         }
     } else {
-        return Ok(HttpResponse::Forbidden().finish());
+        use crate::handlers::note::Validator;
+        if let Some(passphrase) = &auth.passphrase {
+            if passphrase.is_valid_passphrase() {
+                let note_content = notes
+                    .select(content)
+                    .find(note_id.to_owned())
+                    .first::<Vec<u8>>(&mut connection)?;
+                let cryptor = RingCryptor::new();
+                let res = cryptor.open(passphrase.as_bytes(), &note_content);
+
+                if res.is_ok() {
+                    diesel::delete(notes.filter(id.eq(&note_id.to_owned())))
+                        .execute(&mut connection)?;
+                    return Ok(HttpResponse::Ok().finish());
+                }
+            }
+        }
+
+        Ok(HttpResponse::Unauthorized().finish())
     }
 }
