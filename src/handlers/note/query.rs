@@ -1,4 +1,4 @@
-use actix_web::{get, post, web, HttpResponse};
+use actix_web::{web, HttpResponse};
 use diesel::prelude::*;
 use serde_derive::Deserialize;
 use serde_json::json;
@@ -19,9 +19,14 @@ pub struct QueryNote {
     pub backend_encryption: bool,
     pub created_at: SystemTime,
     pub expires_at: Option<SystemTime>,
+    pub delete_after_read: Option<i32>,
+    pub allow_delete_with_passphrase: bool,
 }
 
-#[get("/{note_id}")]
+fn return_id_not_found_response(nid: String) -> HttpResponse {
+    HttpResponse::NotFound().body(format!("note id: {} was not found", nid))
+}
+
 pub async fn info(
     note_id: web::Path<String>,
     pool: web::Data<Pool>,
@@ -43,15 +48,15 @@ pub async fn info(
         Ok(note) => {
             if let Some(time) = note.expires_at {
                 if time <= SystemTime::now() {
-                    diesel::delete(notes.filter(id.eq(note_id.to_owned()))).execute(&mut connection)?;
-                    return Ok(HttpResponse::NotFound()
-                        .body(format!("note id: {} was not found", note_id)));
+                    diesel::delete(notes.filter(id.eq(note_id.to_owned())))
+                        .execute(&mut connection)?;
+                    return Ok(return_id_not_found_response(note_id.to_owned()));
                 }
             }
 
             Ok(HttpResponse::Ok().json(json!(note)))
         }
-        Err(_) => Ok(HttpResponse::NotFound().body(format!("note id: {} was not found", note_id))),
+        Err(_) => Ok(return_id_not_found_response(note_id.to_owned())),
     }
 }
 
@@ -60,24 +65,31 @@ pub struct PassphraseField {
     pub passphrase: Option<String>,
 }
 
-#[post("/{note_id}")]
 pub async fn decrypt_note(
     note_id: web::Path<String>,
     input: web::Json<PassphraseField>,
     pool: web::Data<Pool>,
 ) -> Result<HttpResponse, ServerError> {
     let mut connection = pool.get()?;
+    // this error message has to be consistent so any bad actors will never know whether the note existed or not when requested
 
     match notes
         .find(note_id.to_owned())
         .get_result::<QueryNote>(&mut connection)
     {
         Ok(note) => {
+            let note_content: String;
+            let mut del_invalid_note =
+                || match diesel::delete(notes.filter(id.eq(note_id.to_owned())))
+                    .execute(&mut connection)
+                {
+                    Ok(_) => return_id_not_found_response(note_id.to_owned()),
+                    Err(_) => HttpResponse::InternalServerError().finish(),
+                };
+
             if let Some(time) = note.expires_at {
                 if time <= SystemTime::now() {
-                    diesel::delete(notes.filter(id.eq(note_id.to_owned()))).execute(&mut connection)?;
-                    return Ok(HttpResponse::NotFound()
-                        .body(format!("note id: {} was not found", note_id)));
+                    return Ok(del_invalid_note());
                 }
             }
 
@@ -85,49 +97,54 @@ pub async fn decrypt_note(
                 if let Some(passphrase) = &input.passphrase {
                     let cryptor = RingCryptor::new();
                     let res = cryptor.open(passphrase.as_bytes(), &note.content);
+
                     match res {
-                        Ok(content_in_bytes) => match String::from_utf8(content_in_bytes) {
-                            Ok(note_content) => Ok(HttpResponse::Ok().json(json!({
-                                "id": note.id,
-                                "title": note.title,
-                                "backend_encryption": note.backend_encryption,
-                                "frontend_encryption": note.frontend_encryption,
-                                "content": note_content,
-                                "created_at": note.created_at,
-                                "expires_at": note.expires_at,
-                            }))),
-                            Err(_) => Err(ServerError::TinderCryptError),
-                        },
+                        Ok(content_in_bytes) => note_content = String::from_utf8(content_in_bytes)?,
                         Err(err) => match err {
                             tindercrypt::errors::Error::PassphraseTooSmall => {
-                                Ok(HttpResponse::Unauthorized().body("wrong passphrase"))
+                                return Ok(HttpResponse::Unauthorized().body("wrong passphrase"));
                             }
                             tindercrypt::errors::Error::DecryptionError => {
-                                Ok(HttpResponse::Unauthorized().body("wrong passphrase"))
+                                return Ok(HttpResponse::Unauthorized().body("wrong passphrase"));
                             }
-                            _ => Err(ServerError::TinderCryptError),
+                            _ => {
+                                return Err(ServerError::TinderCryptError);
+                            }
                         },
                     }
                 } else {
-                    Ok(HttpResponse::Unauthorized().body("wrong passphrase"))
+                    return Ok(HttpResponse::Unauthorized().body("wrong passphrase"));
                 }
             } else {
-                let note_content = String::from_utf8(note.content)?;
-                Ok(HttpResponse::Ok().json(json!({
-                    "id": note.id,
-                    "title": note.title,
-                    "backend_encryption": note.backend_encryption,
-                    "frontend_encryption": note.frontend_encryption,
-                    "content": note_content,
-                    "created_at": note.created_at,
-                    "expires_at": note.expires_at,
-                })))
+                note_content = String::from_utf8(note.content)?;
             }
+
+            if let Some(mut query_left) = note.delete_after_read {
+                if query_left > 0 {
+                    query_left -= 1;
+
+                    diesel::update(notes.filter(id.eq(note_id.to_owned())))
+                        .set(delete_after_read.eq(query_left))
+                        .execute(&mut connection)?;
+                } else {
+                    return Ok(return_id_not_found_response(note_id.to_owned()));
+                }
+            }
+
+            Ok(HttpResponse::Ok().json(json!({
+                "id": note.id,
+                "title": note.title,
+                "backend_encryption": note.backend_encryption,
+                "frontend_encryption": note.frontend_encryption,
+                "content": note_content,
+                "created_at": note.created_at,
+                "expires_at": note.expires_at,
+                "request_left": note.delete_after_read.and_then(|x| Some(x-1)),
+                "allow_delete_with_passphrase": note.allow_delete_with_passphrase,
+            })))
         }
         Err(err) => match err {
-            diesel::result::Error::NotFound => {
-                Ok(HttpResponse::NotFound().body(format!("note id: {} was not found", note_id)))
-            }
+            diesel::result::Error::NotFound => Ok(return_id_not_found_response(note_id.to_owned())),
             _ => Err(ServerError::DieselError),
         },
     }
@@ -140,7 +157,6 @@ pub struct FilterParameterQuery {
     pub limit: Option<i64>,
 }
 
-#[get("")]
 pub async fn search_by_title(
     input: web::Query<FilterParameterQuery>,
     pool: web::Data<Pool>,
@@ -160,7 +176,7 @@ pub async fn search_by_title(
         .limit(input.0.limit.unwrap_or(5))
         .order(created_at.asc())
         .filter(
-            title.like(&input.title).and(
+            title.ilike(&input.title).and(
                 backend_encryption
                     .eq(false)
                     .and(frontend_encryption.eq(false))

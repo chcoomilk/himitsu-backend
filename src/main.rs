@@ -33,10 +33,14 @@ async fn main() -> std::io::Result<()> {
         .expect("migration run failed, please check your database configuration!");
     std::thread::spawn(move || loop {
         use schema::notes::dsl::notes;
-        log::info!("Clearing expired notes from database!");
-        diesel::delete(notes.filter(schema::notes::expires_at.le(SystemTime::now())))
-            .execute(&mut connection)
-            .unwrap();
+        log::info!("Clearing invalid notes in database!");
+        diesel::delete(
+            notes
+                .filter(schema::notes::expires_at.le(SystemTime::now()))
+                .or_filter(schema::notes::delete_after_read.eq(0)),
+        )
+        .execute(&mut connection)
+        .unwrap();
         std::thread::sleep(std::time::Duration::from_secs(env.cleanup_interval));
     });
 
@@ -60,22 +64,7 @@ async fn main() -> std::io::Result<()> {
                     .unwrap(),
             ))
             .wrap(Logger::default())
-            // paths should be defined per handlers
-            // https://actix.rs/actix-web/actix_web/struct.App.html#method.configure
-            .service(
-                web::scope("/notes")
-                    .service(handlers::note::mutate::new)
-                    .service(handlers::note::query::info)
-                    .service(handlers::note::query::search_by_title)
-                    .service(handlers::note::query::decrypt_note)
-                    .service(handlers::note::mutate::del),
-            )
-            .service(
-                web::scope("/token")
-                    .service(handlers::token::verify)
-                    .service(handlers::token::combine)
-                    .service(handlers::token::refresh_token),
-            )
+            .configure(handlers::config)
     })
     .bind(address)?
     .run()

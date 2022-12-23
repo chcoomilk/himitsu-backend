@@ -2,7 +2,7 @@ use std::time::SystemTime;
 
 use super::{note::Claims, Pool};
 use crate::{errors::ServerError, AppState};
-use actix_web::{post, put, web, HttpRequest, HttpResponse, patch};
+use actix_web::{web, HttpRequest, HttpResponse};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey};
 use serde::Deserialize;
 use serde_json::json;
@@ -18,7 +18,6 @@ pub struct TokenReq {
 #[derive(Clone, Deserialize)]
 struct Empty {}
 
-#[post("")]
 pub async fn verify(
     body: web::Json<TokenReq>,
     env: web::Data<AppState>,
@@ -40,7 +39,6 @@ pub struct TokensReq {
     second_token: String,
 }
 
-#[put("")]
 pub async fn combine(
     req: HttpRequest,
     body: web::Json<TokensReq>,
@@ -93,7 +91,6 @@ pub async fn combine(
     Ok(HttpResponse::Ok().json(json!({ "token": token })))
 }
 
-#[patch("")]
 // this endpoint serves as clearing out ids that have been deleted
 pub async fn refresh_token(
     req: HttpRequest,
