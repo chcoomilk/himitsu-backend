@@ -41,6 +41,8 @@ pub async fn info(
             frontend_encryption,
             created_at,
             expires_at,
+            delete_after_read,
+            allow_delete_with_passphrase,
         ))
         .find(note_id.to_owned())
         .get_result::<NoteInfo>(&mut connection)
@@ -65,9 +67,15 @@ pub struct PassphraseField {
     pub passphrase: Option<String>,
 }
 
+#[derive(Deserialize)]
+pub struct ReturnOption {
+    pub secret_only: Option<bool>,
+}
+
 pub async fn decrypt_note(
     note_id: web::Path<String>,
     input: web::Json<PassphraseField>,
+    query: web::Query<ReturnOption>,
     pool: web::Data<Pool>,
 ) -> Result<HttpResponse, ServerError> {
     let mut connection = pool.get()?;
@@ -131,6 +139,12 @@ pub async fn decrypt_note(
                 }
             }
 
+            if query.secret_only.is_some().eq(&true) {
+                return Ok(HttpResponse::Ok().json(json!({
+                    "content": note_content,
+                })));
+            }
+
             Ok(HttpResponse::Ok().json(json!({
                 "id": note.id,
                 "title": note.title,
@@ -171,6 +185,8 @@ pub async fn search_by_title(
             frontend_encryption,
             created_at,
             expires_at,
+            delete_after_read,
+            allow_delete_with_passphrase,
         ))
         .offset(input.0.offset.unwrap_or(0))
         .limit(input.0.limit.unwrap_or(5))

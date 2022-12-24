@@ -62,6 +62,8 @@ struct NoteInfo {
     frontend_encryption: bool,
     created_at: SystemTime,
     expires_at: Option<SystemTime>,
+    delete_after_read: Option<i32>,
+    allow_delete_with_passphrase: bool,
 }
 
 trait Validator {
