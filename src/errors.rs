@@ -14,25 +14,29 @@ pub enum ServerError {
 }
 
 impl From<r2d2::Error> for ServerError {
-    fn from(_: r2d2::Error) -> ServerError {
+    fn from(e: r2d2::Error) -> ServerError {
+        println!("{e:?}");
         ServerError::R2D2Error
     }
 }
 
 impl From<std::env::VarError> for ServerError {
-    fn from(_: std::env::VarError) -> ServerError {
+    fn from(e: std::env::VarError) -> ServerError {
+        println!("{e:?}");
         ServerError::EnvironmentError
     }
 }
 
 impl From<diesel::result::Error> for ServerError {
-    fn from(_: diesel::result::Error) -> ServerError {
+    fn from(e: diesel::result::Error) -> ServerError {
+        println!("{e:?}");
         ServerError::DieselError
     }
 }
 
 impl From<tindercrypt::errors::Error> for ServerError {
-    fn from(_: tindercrypt::errors::Error) -> ServerError {
+    fn from(e: tindercrypt::errors::Error) -> ServerError {
+        println!("{e:?}");
         ServerError::TinderCryptError
     }
 }

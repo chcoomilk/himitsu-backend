@@ -170,6 +170,8 @@ pub async fn new(
                 frontend_encryption,
                 created_at,
                 expires_at,
+                delete_after_read,
+                allow_delete_with_passphrase,
             ))
             .get_results::<NoteInfo>(&mut connection)
     };
@@ -254,76 +256,82 @@ pub async fn new(
 }
 
 #[derive(Deserialize)]
-pub struct DeleteUrlQuery {
-    jwt: JWTAuth,
+pub struct WithPassphrase {
     passphrase: Option<String>,
 }
 
 pub async fn del(
     note_id: web::Path<String>,
-    auth: web::Query<DeleteUrlQuery>,
+    auth: web::Query<JWTAuthQuery>,
+    json: web::Json<WithPassphrase>,
     pool: web::Data<Pool>,
     // _req: web::HttpRequest,
 ) -> Result<HttpResponse, ServerError> {
     let mut connection = pool.get()?;
-    let mut jwt = auth.jwt.decode()?;
 
-    let res = jwt
-        .claims
-        .ids
-        .iter()
-        .enumerate()
-        .find(|&t| t.1 .0.eq(&note_id.to_owned()));
-
-    if let Some(res) = res {
-        match notes
-            .select((
-                id,
-                title,
-                backend_encryption,
-                frontend_encryption,
-                created_at,
-                expires_at,
-            ))
-            .find(note_id.to_owned())
-            .first::<NoteInfo>(&mut connection)
-        {
-            Ok(note) => {
-                if note.created_at == res.1 .1 {
-                    diesel::delete(notes.filter(id.eq(&note.id))).execute(&mut connection)?;
-                    jwt.claims.ids.remove(res.0);
-                    Ok(HttpResponse::Ok().json(json!({
-                        "id": note.id,
-                        "token": JWTAuth::new(jwt.claims)?,
-                    })))
-                } else {
-                    Ok(HttpResponse::Forbidden().finish())
-                }
-            }
-            Err(err) => match err {
-                diesel::result::Error::NotFound => Ok(HttpResponse::NotFound().finish()),
-                _ => Err(ServerError::DieselError),
-            },
-        }
-    } else {
-        use crate::handlers::note::Validator;
-        if let Some(passphrase) = &auth.passphrase {
-            if passphrase.is_valid_passphrase() {
-                let note_content = notes
-                    .select(content)
-                    .find(note_id.to_owned())
-                    .first::<Vec<u8>>(&mut connection)?;
-                let cryptor = RingCryptor::new();
-                let res = cryptor.open(passphrase.as_bytes(), &note_content);
-
-                if res.is_ok() {
-                    diesel::delete(notes.filter(id.eq(&note_id.to_owned())))
-                        .execute(&mut connection)?;
-                    return Ok(HttpResponse::Ok().finish());
-                }
-            }
-        }
-
-        Ok(HttpResponse::Unauthorized().finish())
+    if auth.token.is_none() && json.passphrase.is_none() {
+        return Ok(HttpResponse::Unauthorized().finish());
     }
+
+    let note: NoteInfo = match notes
+        .select((
+            id,
+            title,
+            backend_encryption,
+            frontend_encryption,
+            created_at,
+            expires_at,
+            delete_after_read,
+            allow_delete_with_passphrase,
+        ))
+        .find(note_id.to_owned())
+        .first::<NoteInfo>(&mut connection)
+    {
+        Ok(n) => n,
+        Err(err) => match err {
+            diesel::result::Error::NotFound => return Ok(HttpResponse::NotFound().finish()),
+            _ => return Err(ServerError::DieselError),
+        },
+    };
+
+    if let Some(auth) = auth.0.unwrap() {
+        let mut jwt = auth.decode()?;
+        let res = jwt
+            .claims
+            .ids
+            .iter()
+            .enumerate()
+            .find(|&t| t.1 .0.eq(&note_id.to_owned()));
+
+        if let Some(res) = res {
+            if note.created_at == res.1 .1 {
+                diesel::delete(notes.filter(id.eq(&note.id))).execute(&mut connection)?;
+                jwt.claims.ids.remove(res.0);
+                return Ok(HttpResponse::Ok().json(json!({
+                    "id": note.id,
+                    "token": JWTAuth::new(jwt.claims)?,
+                })));
+            }
+        }
+    }
+
+    if let Some(passphrase) = &json.0.passphrase {
+        use crate::handlers::note::Validator;
+        if passphrase.is_valid_passphrase() {
+            let note_content = notes
+                .select(content)
+                .find(note_id.to_owned())
+                .first::<Vec<u8>>(&mut connection)?;
+            let cryptor = RingCryptor::new();
+            let res = cryptor.open(passphrase.as_bytes(), &note_content);
+
+            if res.is_ok() {
+                diesel::delete(notes.filter(id.eq(&note_id.to_owned())))
+                    .execute(&mut connection)?;
+                return Ok(HttpResponse::Ok().finish());
+            }
+        }
+    }
+
+    Ok(HttpResponse::Unauthorized().finish())
 }
