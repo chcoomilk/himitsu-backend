@@ -269,6 +269,31 @@ pub async fn del(
 ) -> Result<HttpResponse, ServerError> {
     let mut connection = pool.get()?;
 
+    if auth.token.is_none() && json.passphrase.is_none() {
+        return Ok(HttpResponse::Unauthorized().finish());
+    }
+
+    let note: NoteInfo = match notes
+        .select((
+            id,
+            title,
+            backend_encryption,
+            frontend_encryption,
+            created_at,
+            expires_at,
+            delete_after_read,
+            allow_delete_with_passphrase,
+        ))
+        .find(note_id.to_owned())
+        .first::<NoteInfo>(&mut connection)
+    {
+        Ok(n) => n,
+        Err(err) => match err {
+            diesel::result::Error::NotFound => return Ok(HttpResponse::NotFound().finish()),
+            _ => return Err(ServerError::DieselError),
+        },
+    };
+
     if let Some(auth) = auth.0.unwrap() {
         let mut jwt = auth.decode()?;
         let res = jwt
@@ -279,40 +304,19 @@ pub async fn del(
             .find(|&t| t.1 .0.eq(&note_id.to_owned()));
 
         if let Some(res) = res {
-            match notes
-                .select((
-                    id,
-                    title,
-                    backend_encryption,
-                    frontend_encryption,
-                    created_at,
-                    expires_at,
-                    delete_after_read,
-                    allow_delete_with_passphrase,
-                ))
-                .find(note_id.to_owned())
-                .first::<NoteInfo>(&mut connection)
-            {
-                Ok(note) => {
-                    if note.created_at == res.1 .1 {
-                        diesel::delete(notes.filter(id.eq(&note.id))).execute(&mut connection)?;
-                        jwt.claims.ids.remove(res.0);
-                        return Ok(HttpResponse::Ok().json(json!({
-                            "id": note.id,
-                            "token": JWTAuth::new(jwt.claims)?,
-                        })));
-                    }
-                }
-                Err(err) => match err {
-                    diesel::result::Error::NotFound => return Ok(HttpResponse::NotFound().finish()),
-                    _ => return Err(ServerError::DieselError),
-                },
+            if note.created_at == res.1 .1 {
+                diesel::delete(notes.filter(id.eq(&note.id))).execute(&mut connection)?;
+                jwt.claims.ids.remove(res.0);
+                return Ok(HttpResponse::Ok().json(json!({
+                    "id": note.id,
+                    "token": JWTAuth::new(jwt.claims)?,
+                })));
             }
         }
     }
 
-    use crate::handlers::note::Validator;
     if let Some(passphrase) = &json.0.passphrase {
+        use crate::handlers::note::Validator;
         if passphrase.is_valid_passphrase() {
             let note_content = notes
                 .select(content)
