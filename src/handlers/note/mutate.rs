@@ -315,7 +315,8 @@ pub async fn del(
         }
     }
 
-    if let Some(passphrase) = &json.0.passphrase {
+    if note.allow_delete_with_passphrase && json.passphrase.is_some() {
+        let passphrase = json.passphrase.to_owned().unwrap();
         use crate::handlers::note::Validator;
         if passphrase.is_valid_passphrase() {
             let note_content = notes
@@ -326,7 +327,7 @@ pub async fn del(
             let res = cryptor.open(passphrase.as_bytes(), &note_content);
 
             if res.is_ok() {
-                diesel::delete(notes.filter(id.eq(&note_id.to_owned())))
+                diesel::delete(notes.filter(id.eq(&note.id.to_owned())))
                     .execute(&mut connection)?;
                 return Ok(HttpResponse::Ok().finish());
             }
