@@ -1,8 +1,8 @@
 use actix_web::web;
 use diesel::{pg::PgConnection, r2d2::ConnectionManager};
 
-pub mod note;
-pub mod token;
+mod note;
+mod token;
 pub type Pool = r2d2::Pool<ConnectionManager<PgConnection>>;
 
 pub fn config(cfg: &mut web::ServiceConfig) {
@@ -11,7 +11,7 @@ pub fn config(cfg: &mut web::ServiceConfig) {
             .service(
                 web::resource("")
                     .route(web::get().to(note::query::search_by_title))
-                    .route(web::post().to(note::mutate::new)),
+                    .route(web::post().to(note::mutate::new::endpoint)),
             )
             .service(
                 web::resource("/{note_id}")

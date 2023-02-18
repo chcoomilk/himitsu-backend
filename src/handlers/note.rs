@@ -73,12 +73,12 @@ trait Validator {
 impl Validator for String {
     fn is_valid_passphrase(&self) -> bool {
         if &self.len() < &4 {
-            return false;
+            false
         } else if &self.len() >= &1024 {
-            return false;
+            false
+        } else {
+            true
         }
-
-        true
     }
 }
 

@@ -135,6 +135,9 @@ pub async fn decrypt_note(
                         .set(delete_after_read.eq(query_left))
                         .execute(&mut connection)?;
                 } else {
+                    diesel::delete(notes.filter(id.eq(note_id.to_owned())))
+                        .execute(&mut connection)?;
+
                     return Ok(return_id_not_found_response(note_id.to_owned()));
                 }
             }
